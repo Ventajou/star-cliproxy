@@ -84,9 +84,9 @@ export interface DebugCaptureInfo {
   rawResponseText?: string;
 }
 
-// CLI 추론 수준 — Claude(--effort), Codex(model_reasoning_effort), Copilot(--effort) 공통.
-// codex는 'xhigh'/'max'를 지원하지 않으므로 codex provider에서 'high'로 폴백한다.
-// Gemini는 지원하지 않으므로 무시된다.
+// CLI 추론 수준 — provider별 지원 범위에 맞춰 변환한다.
+// Codex/Grok/Agy는 'xhigh'/'max' 등 미지원 값을 provider 내부에서 'high'로 폴백한다.
+// Gemini CLI provider는 지원하지 않으므로 무시된다.
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export const REASONING_EFFORT_VALUES: readonly ReasoningEffort[] = [

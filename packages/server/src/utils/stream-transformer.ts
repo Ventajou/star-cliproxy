@@ -448,11 +448,9 @@ const parserRegistry = new Map<string, () => StreamParser>();
 parserRegistry.set('claude', () => new ClaudeStreamParser());
 parserRegistry.set('codex', () => new CodexStreamParser());
 parserRegistry.set('gemini', () => new GeminiStreamParser());
-// agy 1.0.0: plain text 출력 — line-based parser는 사실상 사용되지 않지만
-// (AgyProvider.execute/executeStream이 직접 처리) registry 일관성을 위해 PlainTextParser 등록.
+// AgyProvider가 stream-json을 직접 처리하므로 line parser는 fallback 계약용.
 parserRegistry.set('agy', () => new PlainTextParser());
-// grok: plain text 출력 — GrokProvider.execute/executeStream이 직접 처리.
-// registry 일관성을 위해 PlainTextParser 등록.
+// GrokProvider가 json/streaming-json을 직접 처리하므로 line parser는 fallback 계약용.
 parserRegistry.set('grok', () => new PlainTextParser());
 
 // 플러그인에서 커스텀 파서를 등록할 때 사용

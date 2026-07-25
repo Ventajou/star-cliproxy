@@ -108,17 +108,16 @@ providers:
     #   - "--skip-trust"                 # headless 실행 시 trusted folder 프롬프트 방지
     # working_dir: "/path/to/project"    # 에이전틱 파일 작업 시 필수
 
-  # Google Antigravity CLI (agy) — 2026-05-19 Google I/O 2026 발표, 1.0.10 기준.
+  # Google Antigravity CLI (agy) — 1.1.7 기준.
   # Gemini CLI의 후계자로 Google이 이전 권장. AI Pro/Ultra 구독 + 사전 Google OAuth 로그인 필요
   # (시스템 키체인 저장; SSH 세션은 인가 URL 안내). 설치: curl -fsSL https://antigravity.google/cli/install.sh | bash
   #
-  # 1.0.10 사양 (구현 시 반영됨):
-  #   - --model 지원 → 매핑의 actual_model을 --model로 전달. `agy models`가 출력하는
-  #     **표시명 라벨**을 그대로 써야 한다(예: "Gemini 3.5 Flash (Low)"). 잘못된 라벨은
-  #     에러 없이 조용히 기본값(Flash Medium)으로 폴백하니 정확히 기입할 것.
+  # 1.1.7 사양 (구현 시 반영됨):
+  #   - `agy models`는 effort가 포함된 안정적인 variant slug를 출력한다. proxy는 model family
+  #     slug + --effort 조합으로 전달하며, 잘못된 모델은 print mode에서 오류로 종료한다.
   #     default_model "antigravity"는 placeholder → --model을 생략해 agy가 자동 선택.
-  #   - --json/--stream-json 미지원 → 출력은 plain text. 토큰 사용량은 추정값(estimateTokens).
-  #   - 명시적 스트리밍 없음 → 단일-청크 가짜 스트리밍으로 wrap(클라이언트 호환 유지).
+  #   - --effort low|medium|high 지원. 매핑의 reasoning_effort를 그대로 전달한다.
+  #   - --output-format json/stream-json으로 실제 token usage와 실시간 delta를 사용한다.
   #   - 세션 연속성은 매 호출 신규(messages 전체를 매번 prompt로 직렬화).
   agy:
     enabled: true
@@ -131,25 +130,24 @@ providers:
     # extra_args:
     #   - "--dangerously-skip-permissions"  # 툴 자동 승인 (무인 프록시 운영 시 필수)
     #                                       # 주의: prompt 내 악성 지시가 working_dir 범위 안에서 실행될 수 있음
-    #   - "--sandbox"                       # 터미널 제한 샌드박스 (격리 범위는 agy 1.0.0 문서 기준 불명확)
+    #   - "--sandbox"                       # 터미널 제한 샌드박스 (격리 범위는 agy 문서 확인 후 사용)
     # working_dir: "/path/to/safe-workspace"  # 파일 시스템 격리 권장 (--dangerously-skip-permissions 사용 시 필수)
 
   # xAI Grok Build CLI (grok, "Grok Build TUI") — 2026-05-20 발표.
   # SuperGrok / X Premium+ 구독 + 사전 로그인 필요 (grok login). 설치 후 `grok models`로 모델 확인.
-  # 헤드리스 단발 실행: grok -m <model> -p "<prompt>" → stdout plain text.
+  # 헤드리스 실행은 JSON/streaming-json으로 파싱하며, 큰 prompt는 --prompt-file을 사용.
   #
-  # 동작 (구현 시 반영됨, grok 0.2.60 기준):
+  # 동작 (구현 시 반영됨, grok 0.2.112 기준):
   #   - -m/--model 지원 → 매핑된 actual_model을 실제로 전달. `grok models`:
-  #     grok-build(default, reasoning) + grok-composer-2.5-fast.
-  #   - --effort 지원 → 매핑의 reasoning_effort(low/medium/high/xhigh/max)를 그대로 --effort로 전달.
-  #     단 effort는 모델별: grok-build만 지원, grok-composer-2.5-fast는 미지원(설정 시 API 400).
-  #   - 출력은 plain text(stdout). 토큰 사용량은 추정값(estimateTokens).
-  #   - 단일-청크 가짜 스트리밍으로 wrap(클라이언트 호환 유지).
+  #     grok-4.5(default, reasoning). 카탈로그는 계정/관리 설정에 따라 달라질 수 있다.
+  #   - grok-4.5 --effort는 low|medium|high 지원. xhigh|max 요청은 high로 정규화한다.
+  #   - --output-format json/streaming-json으로 실제 token usage와 실시간 delta를 사용한다.
+  #   - 800KB 초과 prompt는 --prompt-file로 전달해 OS ARG_MAX를 우회한다.
   #   - 세션 연속성은 매 호출 신규(messages 전체를 매번 prompt로 직렬화).
   grok:
     enabled: true
     cli_path: "grok"
-    default_model: "grok-build"         # `grok models`의 기본·최신 모델
+    default_model: "grok-4.5"           # `grok models`의 현재 기본 모델
     max_concurrent: 5                   # 구독 쿼터 보호를 위해 보수적 기본값
     timeout_ms: 300000
     extra_args: []
@@ -250,37 +248,64 @@ model_mappings:
     actual_model: "gpt-5.4"
   # Gemini CLI는 단종됨(agy로 대체) → gemini-pro/gemini-flash 매핑 제거.
   # gemini provider를 다시 켜면 여기에 매핑을 추가하세요.
-  # Antigravity (agy) — 1.0.10+. actual_model = `agy models` 표시명 라벨(잘못된 값은 기본값 폴백).
+  # Antigravity (agy) — 1.1.7+. base model + reasoning_effort 방식.
   - alias: "antigravity"
     provider: "agy"
     actual_model: "antigravity"          # placeholder → --model 생략, agy 자동 선택
-  # Gemini 3.5 Flash reasoning effort 프리셋 (effort별 별도 모델).
+  # Gemini 3.6 Flash reasoning effort 프리셋.
+  - alias: "gemini-3.6-flash-low"
+    provider: "agy"
+    actual_model: "gemini-3.6-flash"
+    reasoning_effort: "low"
+  - alias: "gemini-3.6-flash-medium"
+    provider: "agy"
+    actual_model: "gemini-3.6-flash"
+    reasoning_effort: "medium"
+  - alias: "gemini-3.6-flash-high"
+    provider: "agy"
+    actual_model: "gemini-3.6-flash"
+    reasoning_effort: "high"
+  # Gemini 3.5 Flash reasoning effort 프리셋.
   - alias: "gemini-3.5-flash-low"
     provider: "agy"
-    actual_model: "Gemini 3.5 Flash (Low)"
+    actual_model: "gemini-3.5-flash"
+    reasoning_effort: "low"
   - alias: "gemini-3.5-flash-medium"
     provider: "agy"
-    actual_model: "Gemini 3.5 Flash (Medium)"
+    actual_model: "gemini-3.5-flash"
+    reasoning_effort: "medium"
   - alias: "gemini-3.5-flash-high"
     provider: "agy"
-    actual_model: "Gemini 3.5 Flash (High)"
+    actual_model: "gemini-3.5-flash"
+    reasoning_effort: "high"
   # Gemini 3.1 Pro reasoning 프리셋 (Low/High만 — Medium 없음).
   - alias: "gemini-3.1-pro-low"
     provider: "agy"
-    actual_model: "Gemini 3.1 Pro (Low)"
+    actual_model: "gemini-3.1-pro"
+    reasoning_effort: "low"
   - alias: "gemini-3.1-pro-high"
     provider: "agy"
-    actual_model: "Gemini 3.1 Pro (High)"
+    actual_model: "gemini-3.1-pro"
+    reasoning_effort: "high"
+  - alias: "agy-claude-sonnet"
+    provider: "agy"
+    actual_model: "claude-sonnet-4-6"
+  - alias: "agy-claude-opus"
+    provider: "agy"
+    actual_model: "claude-opus-4-6-thinking"
+  - alias: "agy-gpt-oss"
+    provider: "agy"
+    actual_model: "gpt-oss-120b-medium"
 
-  # xAI Grok Build — grok-build(reasoning, default) + grok-composer-2.5-fast.
+  # xAI Grok Build — 기존 grok-build alias는 호환을 위해 grok-4.5로 유지.
   - alias: "grok-build"
     provider: "grok"
-    actual_model: "grok-build"
-  - alias: "grok-composer"
+    actual_model: "grok-4.5"
+  - alias: "grok-4.5"
     provider: "grok"
-    actual_model: "grok-composer-2.5-fast"   # [주의] effort 미지원 → reasoning_effort 설정 금지
-  # grok-build는 --effort 지원 → reasoning_effort로 추론 수준 프리셋(low|medium|high|xhigh|max).
+    actual_model: "grok-4.5"
+  # grok-4.5는 --effort low|medium|high 지원.
   - alias: "grok-build-high"
     provider: "grok"
-    actual_model: "grok-build"
+    actual_model: "grok-4.5"
     reasoning_effort: "high"

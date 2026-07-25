@@ -75,6 +75,17 @@ npm run dev:dashboard  # dashboard   → http://localhost:5300
 | **HTTP** | any OpenAI-compatible server | add from the dashboard (vLLM, Ollama, MLX, LM Studio…) |
 | **Plugin** | custom CLI | [Plugin Guide](./plugins/README.md) |
 
+### Antigravity and Grok compatibility
+
+| Provider | Verified CLI | Current integration |
+|---|---|---|
+| Antigravity (`agy`) | 1.1.7 | Gemini 3.6/3.5 Flash and 3.1 Pro effort variants, Claude Sonnet/Opus, and GPT-OSS mappings; native `json`/`stream-json`; actual input, cache, output, and thinking token usage |
+| Grok Build (`grok`) | 0.2.112 | `grok-4.5` (also exposed through the compatible `grok-build` alias); native `json`/`streaming-json`; actual token usage; `--prompt-file` for prompts over 800 KB |
+
+Both providers accept `reasoning_effort`. Their current CLI range is `low`, `medium`, or `high`, so `xhigh` and `max` requests are safely normalized to `high`. The model-mapping editor and Playground expose this setting.
+
+On the first startup after upgrading, built-in legacy mappings are migrated automatically: old Antigravity display labels become stable model-family slugs, `grok-build` routes to `grok-4.5`, and the removed default `grok-composer` mapping is disabled. User-created custom mappings are not overwritten. Because CLI catalogs can vary by account and release, check `agy models` and `grok models` after upgrading the CLIs.
+
 ## Usage
 
 OpenAI SDKs (Python/TS), curl, and native Claude Code all work — just set the base URL and an `sk-proxy-` key.

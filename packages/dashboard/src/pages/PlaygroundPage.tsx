@@ -15,7 +15,13 @@ type ReasoningEffortValue = ReasoningEffort | '';
 const REASONING_EFFORT_OPTIONS: ReasoningEffortValue[] = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 // reasoning_effort를 CLI 옵션으로 지원하는 provider만 입력 활성화
-const REASONING_SUPPORTED_PROVIDERS = new Set(['claude', 'codex', 'copilot']);
+const REASONING_SUPPORTED_PROVIDERS = new Set([
+  'claude',
+  'codex',
+  'copilot',
+  'agy',
+  'grok',
+]);
 
 interface Message {
   role: 'system' | 'user' | 'assistant';

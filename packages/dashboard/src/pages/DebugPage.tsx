@@ -128,7 +128,7 @@ function buildTerminalCommand(log: { cliArgs: string | null; httpRequest?: strin
     }
 
     if (provider === 'agy') {
-      // agy 1.0.0: prompt가 이미 -p 인수에 직접 들어 있어 stdin 파이프 불필요
+      // agy 1.1.7: prompt가 이미 -p 인수에 직접 들어 있어 stdin 파이프 불필요
       return cmdArgs.map(escapeShellArg).join(' ');
     }
 

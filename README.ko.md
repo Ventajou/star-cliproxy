@@ -75,6 +75,17 @@ npm run dev:dashboard  # 대시보드   → http://localhost:5300
 | **HTTP** | OpenAI 호환 서버 | 대시보드에서 추가 (vLLM, Ollama, MLX, LM Studio…) |
 | **Plugin** | 커스텀 CLI | [플러그인 가이드](./plugins/README.md) |
 
+### Antigravity·Grok 호환성
+
+| Provider | 검증 버전 | 현재 연동 범위 |
+|---|---|---|
+| Antigravity (`agy`) | 1.1.7 | Gemini 3.6/3.5 Flash·3.1 Pro effort 변형, Claude Sonnet/Opus, GPT-OSS 매핑; 네이티브 `json`/`stream-json`; input·cache·output·thinking 실제 토큰 사용량 |
+| Grok Build (`grok`) | 0.2.112 | `grok-4.5` 및 호환용 `grok-build` 별칭; 네이티브 `json`/`streaming-json`; 실제 토큰 사용량; 800KB 초과 프롬프트의 `--prompt-file` 전달 |
+
+두 provider 모두 `reasoning_effort`를 지원합니다. 현재 CLI 지원 범위는 `low`, `medium`, `high`이므로 `xhigh`와 `max` 요청은 안전하게 `high`로 정규화합니다. 모델 매핑 편집기와 Playground에서도 설정할 수 있습니다.
+
+업그레이드 후 최초 기동 시 내장 레거시 매핑을 자동 마이그레이션합니다. 기존 Antigravity 표시명은 안정적인 model-family slug로 바꾸고, `grok-build`는 `grok-4.5`로 전환하며, 제거된 기본 `grok-composer` 매핑은 비활성화합니다. 사용자가 만든 커스텀 매핑은 덮어쓰지 않습니다. CLI 카탈로그는 계정과 릴리스에 따라 달라질 수 있으므로 CLI를 업그레이드한 뒤 `agy models`와 `grok models`를 확인하세요.
+
 ## 사용법
 
 OpenAI SDK(Python/TS), curl, 네이티브 Claude Code 모두 동작합니다 — base URL과 `sk-proxy-` 키만 설정하면 됩니다.

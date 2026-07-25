@@ -2,13 +2,14 @@ import type { ExecuteOptions, ExecuteResult, ProviderConfigYaml, ProviderEvent, 
 import { BaseProvider, gracefulKill, trackProcess } from './base-provider.js';
 import { convertMessagesToSinglePrompt } from '../utils/message-converter.js';
 import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
 
 // macOS ARG_MAX = 1MB. 여유 두어 800KB 한도 (gemini-provider와 동일 기준).
-// agy 1.0.0은 stdin으로 프롬프트 입력을 지원하지 않아 -p <arg>만 사용.
+// agy 1.1.7은 stdin으로 프롬프트 입력을 지원하지 않아 -p <arg>만 사용.
 const MAX_PROMPT_ARG_BYTES = 800_000;
 
 // 8-bit ANSI escape sequences 제거 (terminal color, cursor codes 등).
-// agy 1.0.0은 plain text를 그대로 stdout으로 내보내지만 일부 환경에서 색상 코드가 섞일 수 있음.
+// 일부 환경에서 응답 문자열에 색상 코드가 섞일 수 있어 방어적으로 제거한다.
 // 참고: 진짜 stdout이 TTY가 아니면 색상은 자동 비활성화되지만 방어적으로 스트립.
 const ANSI_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 
@@ -21,21 +22,98 @@ function estimateTokens(text: string): TokenUsage {
   return { promptTokens: 0, completionTokens, totalTokens: completionTokens };
 }
 
+interface AgyUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  thinking_tokens?: number;
+  cache_read_tokens?: number;
+  total_tokens?: number;
+}
+
+interface AgyResultPayload {
+  status?: string;
+  response?: string;
+  error?: string;
+  usage?: AgyUsage;
+}
+
+function toTokenUsage(usage: AgyUsage | undefined, fallbackText = ''): TokenUsage {
+  if (!usage) return estimateTokens(fallbackText);
+
+  const promptTokens = (usage.input_tokens ?? 0) + (usage.cache_read_tokens ?? 0);
+  const completionTokens = (usage.output_tokens ?? 0) + (usage.thinking_tokens ?? 0);
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens: usage.total_tokens ?? (promptTokens + completionTokens),
+  };
+}
+
+function parseLastJsonLine(stdout: string): unknown {
+  const trimmed = stdout.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // Some versions can print a diagnostic line before the final JSON object.
+  }
+
+  const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    try {
+      return JSON.parse(lines[i]);
+    } catch {
+      // Keep scanning: future CLI versions may emit informational lines before the result.
+    }
+  }
+  throw new Error('agy CLI returned no valid JSON result');
+}
+
+function hasFlag(args: string[], flags: string[]): boolean {
+  return args.some((arg) => flags.some((flag) => arg === flag || arg.startsWith(`${flag}=`)));
+}
+
+function withoutValueFlag(args: string[], flags: string[]): string[] {
+  const filtered: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (flags.some((flag) => arg.startsWith(`${flag}=`))) continue;
+    if (flags.includes(arg)) {
+      i += 1;
+      continue;
+    }
+    filtered.push(arg);
+  }
+  return filtered;
+}
+
+function normalizeEffort(effort: ExecuteOptions['reasoningEffort']): 'low' | 'medium' | 'high' | undefined {
+  if (!effort) return undefined;
+  // agy 1.1.5+ exposes low|medium|high. Preserve the shared API's stronger
+  // presets by mapping them to the strongest level this provider supports.
+  return effort === 'xhigh' || effort === 'max' ? 'high' : effort;
+}
+
+function stripEffortVariant(model: string): string {
+  return model
+    // Gemini의 effort variant만 base slug로 바꾼다. gpt-oss-120b-medium처럼
+    // suffix가 모델 ID 자체인 다른 계열은 훼손하면 안 된다.
+    .replace(/^(gemini-(?:3\.[56]-flash|3\.1-pro))-(low|medium|high)$/i, '$1')
+    .replace(/\s+\((Low|Medium|High)\)$/i, '');
+}
+
 // agy 백엔드가 모델 선택을 위임받는 표시용 placeholder. 이 값일 때는 --model을 보내지 않아
 // agy가 자동 선택하도록 둔다(기존 동작 보존).
 const MODEL_PLACEHOLDER = 'antigravity';
 
 /**
- * Google Antigravity CLI (agy) provider — 2026-05-19 IO 2026 발표, 1.0.10 기준.
+ * Google Antigravity CLI (agy) provider — 1.1.7 기준.
  *
- * 1.0.10 사양:
- *  - --model 지원(1.0.0엔 없었음) → `agy models`가 출력하는 **표시명 라벨을 그대로** 받는다.
- *    예: "Gemini 3.5 Flash (Low)" / "Gemini 3.1 Pro (High)" / "Claude Sonnet 4.6 (Thinking)".
- *    [gotcha] 알 수 없는 라벨은 에러 없이 조용히 백엔드 기본값(Gemini 3.5 Flash Medium)으로
- *    폴백한다(로그: resolver.go "not in local config, defaulting"). 따라서 reasoning effort
- *    선택은 effort 접미사 합성이 아니라 **정확한 표시명 라벨을 actual_model로 매핑**해야 한다.
- *  - --json/--stream-json 플래그 미지원 → 출력은 plain text. NDJSON 파싱 안 함.
- *  - 명시적 스트리밍 API 없음 → executeStream은 단일 text_delta + done으로 가짜 스트리밍 wrap.
+ * 1.1.7 사양:
+ *  - `agy models`가 안정적인 effort variant slug를 출력하며, --model로 pin할 수 있다.
+ *  - --effort low|medium|high 지원. CLI가 받는 model family slug + effort 조합으로 정규화해
+ *    variant suffix와 별도 effort를 함께 넘길 때 생기는 충돌을 방지한다.
+ *  - --output-format json|stream-json 지원. stream-json의 agent_response delta를 실제 스트리밍하고
+ *    result usage(input/output/thinking/cache)를 OpenAI usage로 변환한다.
  *  - 세션 연속성은 매 호출 신규 (--continue/--conversation은 사용자가 extra_args로만 옵트인).
  *  - --dangerously-skip-permissions는 보안 영향이 커서 기본 미포함, 사용자가 extra_args로 옵트인.
  */
@@ -48,13 +126,16 @@ export class AgyProvider extends BaseProvider {
   }
 
   // agy CLI는 인수 한 줄로 prompt를 받음. messages는 단일 텍스트로 직렬화.
-  protected buildArgs(options: ExecuteOptions): string[] {
+  protected buildArgs(
+    options: ExecuteOptions,
+    outputFormat: 'json' | 'stream-json' = 'json',
+  ): string[] {
     const prompt = convertMessagesToSinglePrompt(options.messages);
 
     if (Buffer.byteLength(prompt, 'utf8') > MAX_PROMPT_ARG_BYTES) {
       throw new Error(
         `agy: prompt exceeds ${MAX_PROMPT_ARG_BYTES} bytes ` +
-        `(actual ${Buffer.byteLength(prompt, 'utf8')}). agy 1.0.0은 stdin 프롬프트를 지원하지 않아 ` +
+        `(actual ${Buffer.byteLength(prompt, 'utf8')}). agy는 prompt를 -p 인수로 받아 ` +
         `-p 인수 한도(macOS ARG_MAX 1MB)에 묶임. 메시지를 줄이거나 요약 후 재시도하세요.`
       );
     }
@@ -63,24 +144,33 @@ export class AgyProvider extends BaseProvider {
     // (extra_args + --model) before -p so options such as --print-timeout and
     // --model apply to this run instead of being interpreted as prompt text or
     // ignored after the prompt.
-    const args = [...this.config.extra_args];
+    // 출력 형식은 파서 계약이므로 사용자의 오래된 extra_args보다 provider가 강제한 값을 우선한다.
+    const extraArgs = withoutValueFlag(this.config.extra_args, ['--output-format']);
+    const args = [...extraArgs, '--output-format', outputFormat];
 
-    // 매핑된 actual_model을 --model로 전달(agy 1.0.10+). placeholder면 생략해 agy 자동 선택.
+    // 매핑된 actual_model을 --model로 전달. placeholder면 생략해 agy 자동 선택.
     // 사용자가 extra_args에 --model을 직접 넣었다면 그 값을 존중하고 중복 추가하지 않는다.
-    const model = options.model?.trim();
-    const userSetModel = this.config.extra_args.includes('--model');
+    const requestedEffort = normalizeEffort(options.reasoningEffort);
+    const model = requestedEffort
+      ? stripEffortVariant(options.model?.trim() ?? '')
+      : options.model?.trim();
+    const userSetModel = hasFlag(this.config.extra_args, ['--model']);
     if (model && model !== MODEL_PLACEHOLDER && !userSetModel) {
       args.push('--model', model);
+    }
+
+    const userSetEffort = hasFlag(this.config.extra_args, ['--effort']);
+    if (requestedEffort && !userSetEffort) {
+      args.push('--effort', requestedEffort);
     }
 
     args.push('-p', prompt);
     return args;
   }
 
-  // agy는 plain text를 stdout으로 흘리므로 BaseProvider의 NDJSON 라인 파싱을 우회.
-  // stdout 전체를 단일 응답 텍스트로 처리.
+  // json 결과를 사용해 오류와 실제 token usage를 보존한다.
   override async execute(options: ExecuteOptions): Promise<ExecuteResult> {
-    const args = this.buildArgs({ ...options, stream: false });
+    const args = this.buildArgs({ ...options, stream: false }, 'json');
     const { stdout, stderr, exitCode } = await this.runOnce(args, options.signal);
 
     if (exitCode !== 0) {
@@ -90,31 +180,119 @@ export class AgyProvider extends BaseProvider {
 
     options.onDebug?.({ cliArgs: [this.config.cli_path, ...args], stdout, stderr });
 
-    const content = stripAnsi(stdout).trim();
+    const envelope = parseLastJsonLine(stdout) as { result?: AgyResultPayload } & AgyResultPayload;
+    const result = envelope.result ?? envelope;
+    if (result.status !== 'SUCCESS') {
+      throw new Error(`agy CLI failed: ${result.error || 'unknown error'}`);
+    }
+
+    const content = stripAnsi(result.response ?? '').trim();
     return {
       content,
-      usage: estimateTokens(content),
+      usage: toTokenUsage(result.usage, content),
       finishReason: 'stop',
     };
   }
 
-  // 1.0.0은 실시간 스트리밍 출력이 없음. 전체 응답을 받은 뒤 단일 chunk로 wrap.
-  // chat completion 스트리밍 호환을 유지하기 위함 (클라이언트 코드 변경 없이 동작).
+  // stream-json의 agent_response delta를 OpenAI 호환 ProviderEvent로 변환한다.
   override async *executeStream(options: ExecuteOptions): AsyncIterable<ProviderEvent> {
-    const result = await this.execute({ ...options, stream: false });
+    const args = this.buildArgs({ ...options, stream: true }, 'stream-json');
+    const child = spawn(this.config.cli_path, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: this.getCleanEnv(),
+      cwd: this.workingDir,
+      shell: process.platform === 'win32',
+    });
+    trackProcess(child);
 
-    if (result.content) {
-      yield { type: 'text_delta', text: result.content };
+    const debugLines: string[] = [];
+    const stderrChunks: Buffer[] = [];
+    let terminalError: Error | undefined;
+    let finalResult: AgyResultPayload | undefined;
+    let emittedText = false;
+
+    child.stderr?.on('data', (data: Buffer) => stderrChunks.push(data));
+    const closePromise = new Promise<number>((resolve) => {
+      child.on('error', (err) => {
+        terminalError = new Error(`Failed to spawn agy CLI: ${err.message}`);
+        resolve(1);
+      });
+      child.on('close', (code) => resolve(code ?? 1));
+    });
+
+    const timeout = setTimeout(() => {
+      terminalError = new Error(`agy CLI timed out after ${this.config.timeout_ms}ms`);
+      gracefulKill(child);
+    }, this.config.timeout_ms);
+
+    const onAbort = () => {
+      terminalError = new Error('Request cancelled');
+      gracefulKill(child);
+    };
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+
+    try {
+      const rl = createInterface({ input: child.stdout! });
+      for await (const line of rl) {
+        if (options.onDebug) debugLines.push(line);
+
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+
+        if (data.event === 'step_update') {
+          const step = data.step_update as Record<string, unknown> | undefined;
+          if (step?.step_type === 'agent_response' && typeof step.text_delta === 'string' && step.text_delta) {
+            emittedText = true;
+            yield { type: 'text_delta', text: step.text_delta };
+          }
+          continue;
+        }
+
+        if (data.event === 'result') {
+          const result = data.result as AgyResultPayload | undefined;
+          if (result?.status !== 'SUCCESS') {
+            throw new Error(`agy CLI failed: ${result?.error || 'unknown error'}`);
+          }
+          finalResult = result;
+        }
+      }
+
+      const exitCode = await closePromise;
+      if (terminalError) throw terminalError;
+      if (exitCode !== 0) {
+        throw new Error(`agy CLI exited with code ${exitCode}: ${Buffer.concat(stderrChunks).toString('utf-8').trim()}`);
+      }
+      if (!finalResult) throw new Error('agy CLI stream ended without a result event');
+
+      // Delta를 내보내지 않은 호환 구현에서도 최종 response를 잃지 않는다.
+      const fallbackContent = stripAnsi(finalResult.response ?? '').trim();
+      if (!emittedText && fallbackContent) {
+        yield { type: 'text_delta', text: fallbackContent };
+      }
+
+      // 프로세스가 정상 종료된 뒤 완료 이벤트를 내보내야 소비자가 done에서 순회를
+      // 중단하더라도 CLI를 강제 종료하거나 임시 리소스를 조기에 정리하지 않는다.
+      yield {
+        type: 'usage',
+        usage: toTokenUsage(finalResult.usage, finalResult.response ?? ''),
+      };
+      yield { type: 'done', finishReason: 'stop' };
+    } finally {
+      clearTimeout(timeout);
+      options.signal?.removeEventListener('abort', onAbort);
+      if (child.exitCode === null) gracefulKill(child);
+      if (options.onDebug) {
+        options.onDebug({
+          cliArgs: [this.config.cli_path, ...args],
+          stderr: Buffer.concat(stderrChunks).toString('utf-8'),
+          streamLines: debugLines,
+        });
+      }
     }
-    yield {
-      type: 'usage',
-      usage: result.usage,
-    };
-    yield {
-      type: 'done',
-      // ExecuteResult(OpenAI 'tool_calls') → ProviderDoneEvent('tool_use') 매핑. CLI는 실제로 미발생.
-      finishReason: result.finishReason === 'tool_calls' ? 'tool_use' : (result.finishReason ?? 'stop'),
-    };
   }
 
   // BaseProvider.runProcess는 private이라 재사용 불가 → 동일 패턴 인라인 구현.

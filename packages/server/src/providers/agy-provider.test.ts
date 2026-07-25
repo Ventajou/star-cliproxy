@@ -51,6 +51,24 @@ function fakeChild(stdout: string, stderr = '', exitCode = 0) {
   return child;
 }
 
+function agyJson(
+  response: string,
+  usage = {
+    input_tokens: 10,
+    output_tokens: 4,
+    thinking_tokens: 2,
+    cache_read_tokens: 3,
+    total_tokens: 19,
+  },
+): string {
+  return JSON.stringify({
+    conversation_id: 'test-conversation',
+    status: 'SUCCESS',
+    response,
+    usage,
+  });
+}
+
 beforeEach(() => {
   spawnMock.mockReset();
 });
@@ -61,8 +79,9 @@ describe('AgyProvider.buildArgs', () => {
     const args = (provider as unknown as { buildArgs(opts: ExecuteOptions): string[] }).buildArgs(
       baseOptions({ messages: [{ role: 'user', content: 'ping' }] }),
     );
-    expect(args[0]).toBe('-p');
-    expect(args[1]).toBe('ping');
+    expect(args[args.indexOf('-p') + 1]).toBe('ping');
+    expect(args.slice(args.indexOf('--output-format'), args.indexOf('--output-format') + 2))
+      .toEqual(['--output-format', 'json']);
   });
 
   it('placeholder default_model("antigravity")은 --model을 추가하지 않음 (agy 자동 선택)', () => {
@@ -73,16 +92,44 @@ describe('AgyProvider.buildArgs', () => {
     expect(args).not.toContain('--model');
   });
 
-  it('매핑된 actual_model(표시명 라벨)을 --model로 -p 앞에 전달 (agy 1.0.10+)', () => {
+  it('base model과 reasoning effort를 --model/--effort로 -p 앞에 전달', () => {
     const provider = new AgyProvider(baseConfig());
     const args = (provider as unknown as { buildArgs(opts: ExecuteOptions): string[] }).buildArgs(
-      baseOptions({ model: 'Gemini 3.5 Flash (Low)' }),
+      baseOptions({ model: 'gemini-3.6-flash', reasoningEffort: 'low' }),
     );
     const modelIdx = args.indexOf('--model');
     expect(modelIdx).toBeGreaterThanOrEqual(0);
-    expect(args[modelIdx + 1]).toBe('Gemini 3.5 Flash (Low)');
+    expect(args[modelIdx + 1]).toBe('gemini-3.6-flash');
+    expect(args[args.indexOf('--effort') + 1]).toBe('low');
     // 모든 플래그는 -p 앞에 와야 함 (agy print-mode 파싱 규칙).
     expect(modelIdx).toBeLessThan(args.indexOf('-p'));
+  });
+
+  it('variant suffix 모델에 body reasoningEffort가 있으면 base model로 정규화', () => {
+    const provider = new AgyProvider(baseConfig());
+    const args = (provider as unknown as { buildArgs(opts: ExecuteOptions): string[] }).buildArgs(
+      baseOptions({ model: 'gemini-3.6-flash-medium', reasoningEffort: 'high' }),
+    );
+    expect(args[args.indexOf('--model') + 1]).toBe('gemini-3.6-flash');
+    expect(args[args.indexOf('--effort') + 1]).toBe('high');
+  });
+
+  it('effort가 모델 ID 일부인 비-Gemini 모델은 suffix를 보존', () => {
+    const provider = new AgyProvider(baseConfig());
+    const args = (provider as unknown as { buildArgs(opts: ExecuteOptions): string[] }).buildArgs(
+      baseOptions({ model: 'gpt-oss-120b-medium', reasoningEffort: 'high' }),
+    );
+    expect(args[args.indexOf('--model') + 1]).toBe('gpt-oss-120b-medium');
+  });
+
+  it('xhigh/max effort는 agy가 지원하는 high로 정규화', () => {
+    const provider = new AgyProvider(baseConfig());
+    for (const effort of ['xhigh', 'max'] as const) {
+      const args = (provider as unknown as { buildArgs(opts: ExecuteOptions): string[] }).buildArgs(
+        baseOptions({ model: 'gemini-3.6-flash', reasoningEffort: effort }),
+      );
+      expect(args[args.indexOf('--effort') + 1]).toBe('high');
+    }
   });
 
   it('빈 model은 --model을 추가하지 않음', () => {
@@ -95,14 +142,14 @@ describe('AgyProvider.buildArgs', () => {
 
   it('extra_args에 --model이 있으면 중복 추가하지 않고 사용자 값 존중', () => {
     const provider = new AgyProvider(baseConfig({
-      extra_args: ['--model', 'Gemini 3.1 Pro (High)'],
+      extra_args: ['--model', 'gemini-3.1-pro-high'],
     }));
     const args = (provider as unknown as { buildArgs(opts: ExecuteOptions): string[] }).buildArgs(
-      baseOptions({ model: 'Gemini 3.5 Flash (Low)' }),
+      baseOptions({ model: 'gemini-3.5-flash-low' }),
     );
     expect(args.filter((a) => a === '--model')).toHaveLength(1);
-    expect(args).toContain('Gemini 3.1 Pro (High)');
-    expect(args).not.toContain('Gemini 3.5 Flash (Low)');
+    expect(args).toContain('gemini-3.1-pro-high');
+    expect(args).not.toContain('gemini-3.5-flash-low');
   });
 
   it('extra_args를 -p prompt 앞에 그대로 prepend', () => {
@@ -112,7 +159,26 @@ describe('AgyProvider.buildArgs', () => {
     const args = (provider as unknown as { buildArgs(opts: ExecuteOptions): string[] }).buildArgs(
       baseOptions(),
     );
-    expect(args).toEqual(['--dangerously-skip-permissions', '--sandbox', '-p', 'hello']);
+    expect(args).toEqual([
+      '--dangerously-skip-permissions',
+      '--sandbox',
+      '--output-format',
+      'json',
+      '-p',
+      'hello',
+    ]);
+  });
+
+  it('extra_args의 output format은 provider가 요구하는 형식으로 교체', () => {
+    const provider = new AgyProvider(baseConfig({
+      extra_args: ['--output-format', 'text', '--print-timeout', '120'],
+    }));
+    const args = (provider as unknown as { buildArgs(opts: ExecuteOptions): string[] }).buildArgs(
+      baseOptions(),
+    );
+    expect(args.filter((arg) => arg === '--output-format')).toHaveLength(1);
+    expect(args[args.indexOf('--output-format') + 1]).toBe('json');
+    expect(args).not.toContain('text');
   });
 
   it('800KB 초과 prompt는 빌드 단계에서 즉시 throw (ARG_MAX 보호)', () => {
@@ -126,9 +192,9 @@ describe('AgyProvider.buildArgs', () => {
   });
 });
 
-describe('AgyProvider.execute (plain text 파싱)', () => {
-  it('stdout을 trim한 plain text를 content로 반환', async () => {
-    spawnMock.mockReturnValue(fakeChild('  Hello from agy.  \n'));
+describe('AgyProvider.execute (JSON 결과 파싱)', () => {
+  it('JSON response를 trim해 content로 반환', async () => {
+    spawnMock.mockReturnValue(fakeChild(agyJson('  Hello from agy.  \n')));
     const provider = new AgyProvider(baseConfig());
     const result = await provider.execute(baseOptions());
     expect(result.content).toBe('Hello from agy.');
@@ -136,7 +202,7 @@ describe('AgyProvider.execute (plain text 파싱)', () => {
   });
 
   it('ANSI 색상 시퀀스를 스트립', async () => {
-    spawnMock.mockReturnValue(fakeChild('\x1B[31mred\x1B[0m text'));
+    spawnMock.mockReturnValue(fakeChild(agyJson('\x1B[31mred\x1B[0m text')));
     const provider = new AgyProvider(baseConfig());
     const result = await provider.execute(baseOptions());
     expect(result.content).toBe('red text');
@@ -148,37 +214,98 @@ describe('AgyProvider.execute (plain text 파싱)', () => {
     await expect(provider.execute(baseOptions())).rejects.toThrow(/auth required/);
   });
 
-  it('토큰 사용량은 estimateTokens 폴백 (1.0.0이 토큰 정보 미제공)', async () => {
-    spawnMock.mockReturnValue(fakeChild('1234567890'));
+  it('exit code가 0이어도 result status=ERROR이면 throw', async () => {
+    spawnMock.mockReturnValue(fakeChild(JSON.stringify({
+      status: 'ERROR',
+      response: '',
+      error: 'invalid model',
+    })));
+    const provider = new AgyProvider(baseConfig());
+    await expect(provider.execute(baseOptions())).rejects.toThrow(/invalid model/);
+  });
+
+  it('실제 input/output/thinking/cache token usage를 변환', async () => {
+    spawnMock.mockReturnValue(fakeChild(agyJson('1234567890')));
     const provider = new AgyProvider(baseConfig());
     const result = await provider.execute(baseOptions());
-    // 10 chars → ceil(10/4) = 3 completion tokens
-    expect(result.usage.completionTokens).toBe(3);
-    expect(result.usage.promptTokens).toBe(0);
+    expect(result.usage).toEqual({
+      promptTokens: 13,
+      completionTokens: 6,
+      totalTokens: 19,
+    });
   });
 });
 
-describe('AgyProvider.executeStream (단일-청크 가짜 스트리밍)', () => {
+describe('AgyProvider.executeStream (stream-json)', () => {
   it('text_delta → usage → done 순서로 이벤트 emit', async () => {
-    spawnMock.mockReturnValue(fakeChild('response body'));
+    spawnMock.mockReturnValue(fakeChild([
+      JSON.stringify({ event: 'init', init: { model: 'gemini-3.6-flash-low' } }),
+      JSON.stringify({
+        event: 'step_update',
+        step_update: { step_type: 'agent_response', state: 'ACTIVE', text_delta: 'response ' },
+      }),
+      JSON.stringify({
+        event: 'step_update',
+        step_update: { step_type: 'agent_response', state: 'DONE', text_delta: 'body' },
+      }),
+      JSON.stringify({
+        event: 'result',
+        result: {
+          status: 'SUCCESS',
+          response: 'response body',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 4,
+            thinking_tokens: 2,
+            cache_read_tokens: 3,
+            total_tokens: 19,
+          },
+        },
+      }),
+    ].join('\n')));
     const provider = new AgyProvider(baseConfig());
     const events: ProviderEvent[] = [];
     for await (const ev of provider.executeStream(baseOptions({ stream: true }))) {
       events.push(ev);
     }
 
-    expect(events.map(e => e.type)).toEqual(['text_delta', 'usage', 'done']);
-    expect((events[0] as { type: 'text_delta'; text: string }).text).toBe('response body');
-    expect((events[2] as { type: 'done'; finishReason: string }).finishReason).toBe('stop');
+    expect(events.map(e => e.type)).toEqual(['text_delta', 'text_delta', 'usage', 'done']);
+    expect(events
+      .filter((event): event is Extract<ProviderEvent, { type: 'text_delta' }> => event.type === 'text_delta')
+      .map((event) => event.text)
+      .join('')).toBe('response body');
+    expect((events[3] as { type: 'done'; finishReason: string }).finishReason).toBe('stop');
   });
 
-  it('빈 응답은 text_delta를 emit하지 않음', async () => {
-    spawnMock.mockReturnValue(fakeChild(''));
+  it('result status=ERROR이면 stream을 throw', async () => {
+    spawnMock.mockReturnValue(fakeChild(JSON.stringify({
+      event: 'result',
+      result: { status: 'ERROR', error: 'quota exceeded' },
+    })));
+    const provider = new AgyProvider(baseConfig());
+    const consume = async () => {
+      for await (const _event of provider.executeStream(baseOptions({ stream: true }))) {
+        // consume
+      }
+    };
+    await expect(consume()).rejects.toThrow(/quota exceeded/);
+  });
+
+  it('delta가 없는 호환 출력은 최종 response를 text_delta로 보존', async () => {
+    spawnMock.mockReturnValue(fakeChild(JSON.stringify({
+      event: 'result',
+      result: {
+        status: 'SUCCESS',
+        response: 'fallback response',
+        usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+      },
+    })));
     const provider = new AgyProvider(baseConfig());
     const events: ProviderEvent[] = [];
-    for await (const ev of provider.executeStream(baseOptions({ stream: true }))) {
-      events.push(ev);
+    for await (const event of provider.executeStream(baseOptions({ stream: true }))) {
+      events.push(event);
     }
-    expect(events.map(e => e.type)).toEqual(['usage', 'done']);
+    expect(events.map((event) => event.type)).toEqual(['text_delta', 'usage', 'done']);
+    expect((events[0] as { type: 'text_delta'; text: string }).text).toBe('fallback response');
   });
 });
