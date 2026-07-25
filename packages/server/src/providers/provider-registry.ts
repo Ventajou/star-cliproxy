@@ -6,6 +6,7 @@ import { CodexProvider } from './codex-provider.js';
 import { CopilotProvider } from './copilot-provider.js';
 import { GeminiProvider } from './gemini-provider.js';
 import { GrokProvider } from './grok-provider.js';
+import { KimiProvider } from './kimi-provider.js';
 
 export class ProviderRegistry {
   private providers = new Map<string, BaseProvider>();
@@ -82,6 +83,7 @@ const builtinFactories: Record<string, ProviderFactory> = {
   gemini: (config) => new GeminiProvider(config),
   agy: (config) => new AgyProvider(config),
   grok: (config) => new GrokProvider(config),
+  kimi: (config) => new KimiProvider(config),
 };
 
 // 설정 기반으로 활성화된 Provider들을 등록

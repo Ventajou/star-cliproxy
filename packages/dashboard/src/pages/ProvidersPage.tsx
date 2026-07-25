@@ -38,7 +38,7 @@ import {
 const ENDPOINT_TYPE_OPTIONS: EndpointType[] = ['chat', 'embeddings', 'rerank', 'images', 'tts'];
 
 // 빌트인 프로바이더 목록
-const BUILTIN_PROVIDERS = new Set(['claude', 'codex', 'copilot', 'gemini', 'agy', 'grok']);
+const BUILTIN_PROVIDERS = new Set(['claude', 'codex', 'copilot', 'gemini', 'agy', 'grok', 'kimi']);
 
 interface ProviderState {
   info: ProviderInfo;

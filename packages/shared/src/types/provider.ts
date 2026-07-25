@@ -3,7 +3,7 @@
 import type { ChatMessage, ChatCompletionTool, ToolChoice, ChatMessageToolCall } from './api.js';
 
 // 빌트인 프로바이더 (메인 코드에 포함)
-export const BUILTIN_PROVIDERS = ['claude', 'codex', 'copilot', 'gemini', 'agy', 'grok'] as const;
+export const BUILTIN_PROVIDERS = ['claude', 'codex', 'copilot', 'gemini', 'agy', 'grok', 'kimi'] as const;
 export type BuiltinProviderName = typeof BUILTIN_PROVIDERS[number];
 
 // 플러그인 프로바이더까지 포함하는 동적 타입
@@ -85,7 +85,8 @@ export interface DebugCaptureInfo {
 }
 
 // CLI 추론 수준 — provider별 지원 범위에 맞춰 변환한다.
-// Codex/Grok/Agy는 'xhigh'/'max' 등 미지원 값을 provider 내부에서 'high'로 폴백한다.
+// Codex/Grok/Agy는 미지원 단계를 provider 범위로 폴백한다.
+// Kimi K3는 low/high/max로 정규화하며, 다른 Kimi 모델에서는 무시한다.
 // Gemini CLI provider는 지원하지 않으므로 무시된다.
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 

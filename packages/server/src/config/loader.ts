@@ -119,6 +119,8 @@ const BUILTIN_DEFAULTS: Record<string, { cliPath: string; defaultModel: string }
   agy: { cliPath: 'agy', defaultModel: 'antigravity' },
   // xAI Grok Build CLI (`grok`) 0.2.112 기본 카탈로그
   grok: { cliPath: 'grok', defaultModel: 'grok-4.5' },
+  // Moonshot AI Kimi Code CLI. 모든 회원에게 제공되는 coding 모델을 안전한 기본값으로 사용.
+  kimi: { cliPath: 'kimi', defaultModel: 'kimi-code/kimi-for-coding' },
 };
 
 export function loadConfig(configPath?: string): AppConfig {
@@ -252,6 +254,9 @@ export function loadConfig(configPath?: string): AppConfig {
       // xAI Grok Build — 기존 alias는 유지하되 현재 모델로 라우팅
       { alias: 'grok-build', provider: 'grok', actual_model: 'grok-4.5' },
       { alias: 'grok-4.5', provider: 'grok', actual_model: 'grok-4.5' },
+      // Moonshot AI Kimi Code — CLI가 요구하는 provider/model alias를 그대로 전달
+      { alias: 'kimi-coding', provider: 'kimi', actual_model: 'kimi-code/kimi-for-coding' },
+      { alias: 'kimi-k3', provider: 'kimi', actual_model: 'kimi-code/k3' },
     ],
   };
 }

@@ -25,7 +25,7 @@ client.chat.completions.create(
 ## Why star-cliproxy?
 
 - 💸 **Subscriptions, not API keys** — bill against Claude Max / ChatGPT Pro / etc. instead of metered API tokens.
-- 🔌 **One endpoint, many backends** — 5 built-in CLIs (Claude, Codex, Copilot, Antigravity, Grok) **+** any OpenAI-compatible HTTP server (vLLM, Ollama, MLX, LM Studio) **+** custom plugins.
+- 🔌 **One endpoint, many backends** — 6 active built-in CLIs (Claude, Codex, Copilot, Antigravity, Grok, Kimi) **+** any OpenAI-compatible HTTP server (vLLM, Ollama, MLX, LM Studio) **+** custom plugins.
 - 🧭 **Smart routing** — alias-based model mapping with priority fallback chains, per-model provider overrides, and session reuse (`codex exec resume`).
 - ⚙️ **Multiple execution modes** — `cli`, Claude **Agent SDK**, Codex **app-server**, and the new **channel-worker** bridge mode.
 - 📡 **Real SSE streaming** — native NDJSON/JSONL event pipes, not fake post-hoc chunking.
@@ -60,7 +60,7 @@ npm run dev            # backend API → http://localhost:8300
 npm run dev:dashboard  # dashboard   → http://localhost:5300
 ```
 
-**Prerequisites:** Node.js 20+ and at least one authenticated CLI. Run each CLI once on its own first to finish login.
+**Prerequisites:** Node.js 20+ and at least one authenticated CLI. Run each CLI once on its own first to finish login. The npm build of Kimi Code 0.29.1 specifically requires Node.js 22.19+; its official installer is also available below.
 
 ## Supported Providers
 
@@ -72,19 +72,21 @@ npm run dev:dashboard  # dashboard   → http://localhost:5300
 | ~~Gemini CLI~~ *(discontinued)* | — | use **Antigravity CLI** below — Gemini CLI was discontinued by Google |
 | [Antigravity CLI](https://antigravity.google/) | Google AI Pro / Ultra | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` |
 | [Grok Build CLI](https://x.ai/cli) | SuperGrok / X Premium+ | `curl -fsSL https://x.ai/cli/install.sh \| bash` |
+| [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code) | Kimi Code membership / API key | `curl -fsSL https://code.kimi.com/kimi-code/install.sh \| bash` |
 | **HTTP** | any OpenAI-compatible server | add from the dashboard (vLLM, Ollama, MLX, LM Studio…) |
 | **Plugin** | custom CLI | [Plugin Guide](./plugins/README.md) |
 
-### Antigravity and Grok compatibility
+### Antigravity, Grok, and Kimi compatibility
 
 | Provider | Verified CLI | Current integration |
 |---|---|---|
 | Antigravity (`agy`) | 1.1.7 | Gemini 3.6/3.5 Flash and 3.1 Pro effort variants, Claude Sonnet/Opus, and GPT-OSS mappings; native `json`/`stream-json`; actual input, cache, output, and thinking token usage |
 | Grok Build (`grok`) | 0.2.112 | `grok-4.5` (also exposed through the compatible `grok-build` alias); native `json`/`streaming-json`; actual token usage; `--prompt-file` for prompts over 800 KB |
+| Kimi Code (`kimi`) | 0.29.1 | `kimi-for-coding`, high-speed, K3, and K3-256k aliases; native `stream-json` assistant steps; K3 `low`/`high`/`max` reasoning; estimated token usage |
 
-Both providers accept `reasoning_effort`. Their current CLI range is `low`, `medium`, or `high`, so `xhigh` and `max` requests are safely normalized to `high`. The model-mapping editor and Playground expose this setting.
+Antigravity and Grok accept `low`, `medium`, or `high`, so `xhigh` and `max` requests are normalized to `high`. Kimi K3 uses `low`, `high`, or `max`: `medium` becomes `high`, while `xhigh` becomes `max`. The model-mapping editor and Playground expose these settings.
 
-On the first startup after upgrading, built-in legacy mappings are migrated automatically: old Antigravity display labels become stable model-family slugs, `grok-build` routes to `grok-4.5`, and the removed default `grok-composer` mapping is disabled. User-created custom mappings are not overwritten. Because CLI catalogs can vary by account and release, check `agy models` and `grok models` after upgrading the CLIs.
+On the first startup after upgrading, built-in legacy mappings are migrated automatically and the Kimi aliases are added without overwriting user-created mappings. Kimi `actual_model` values are CLI aliases such as `kimi-code/k3`, not raw API model IDs. Kimi does not report token usage in `stream-json`, so the proxy marks usage using a UTF-8-size estimate. Prompt mode also runs Kimi autonomously; configure an isolated `working_dir` for untrusted requests.
 
 ## Usage
 

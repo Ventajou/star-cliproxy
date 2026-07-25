@@ -87,11 +87,28 @@ describe.sequential('seedDatabase CLI model catalog migration', () => {
     expect(byAlias.get('agy-claude-sonnet')?.actualModel).toBe('claude-sonnet-4-6');
     expect(byAlias.get('grok-4.5')?.actualModel).toBe('grok-4.5');
     expect(rows.filter((row) => row.alias === 'grok-4.5')).toHaveLength(1);
+    expect(byAlias.get('kimi-coding')).toMatchObject({
+      provider: 'kimi',
+      actualModel: 'kimi-code/kimi-for-coding',
+    });
+    expect(byAlias.get('kimi-k3-max')).toMatchObject({
+      provider: 'kimi',
+      actualModel: 'kimi-code/k3',
+      reasoningEffort: 'max',
+    });
+    expect(byAlias.get('kimi-k3-256k')?.actualModel).toBe('kimi-code/k3-256k');
+    expect(rows.filter((row) => row.alias === 'kimi-k3')).toHaveLength(1);
 
     const migration = await db
       .select()
       .from(settings)
       .where(eq(settings.key, 'migration.cli-model-catalog-2026-07'));
     expect(migration).toHaveLength(1);
+
+    const kimiMigration = await db
+      .select()
+      .from(settings)
+      .where(eq(settings.key, 'migration.kimi-provider-catalog-2026-07'));
+    expect(kimiMigration).toHaveLength(1);
   });
 });

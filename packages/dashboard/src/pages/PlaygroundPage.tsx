@@ -21,6 +21,7 @@ const REASONING_SUPPORTED_PROVIDERS = new Set([
   'copilot',
   'agy',
   'grok',
+  'kimi',
 ]);
 
 interface Message {

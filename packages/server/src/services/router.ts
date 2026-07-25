@@ -112,6 +112,10 @@ export class ModelRouter {
     if (/^grok(-|$)/.test(lower)) {
       return 'grok';
     }
+    // Kimi Code: 공개 alias(kimi-*) 및 CLI provider/model alias(kimi-code/*)
+    if (/^kimi(?:-|\/|$)/.test(lower)) {
+      return 'kimi';
+    }
     return null;
   }
 }

@@ -25,7 +25,7 @@ client.chat.completions.create(
 ## 왜 star-cliproxy인가요?
 
 - 💸 **API 키가 아닌 구독 활용** — 토큰 종량 과금 대신 Claude Max / ChatGPT Pro 등 구독으로 처리됩니다.
-- 🔌 **하나의 엔드포인트, 여러 백엔드** — 빌트인 CLI 5종(Claude, Codex, Copilot, Antigravity, Grok) **+** OpenAI 호환 HTTP 서버(vLLM, Ollama, MLX, LM Studio) **+** 커스텀 플러그인.
+- 🔌 **하나의 엔드포인트, 여러 백엔드** — 활성 빌트인 CLI 6종(Claude, Codex, Copilot, Antigravity, Grok, Kimi) **+** OpenAI 호환 HTTP 서버(vLLM, Ollama, MLX, LM Studio) **+** 커스텀 플러그인.
 - 🧭 **스마트 라우팅** — 별칭 기반 모델 매핑, 우선순위 폴백 체인, 모델 단위 provider 오버라이드, 세션 재사용(`codex exec resume`).
 - ⚙️ **다양한 실행 모드** — `cli`, Claude **Agent SDK**, Codex **app-server**, 그리고 신규 **channel-worker** bridge 모드.
 - 📡 **진짜 SSE 스트리밍** — NDJSON/JSONL 이벤트 파이프 그대로 전달 (사후 청크 분할이 아님).
@@ -60,7 +60,7 @@ npm run dev            # 백엔드 API → http://localhost:8300
 npm run dev:dashboard  # 대시보드   → http://localhost:5300
 ```
 
-**사전 요구사항:** Node.js 20+ 와 인증된 CLI 1개 이상. 각 CLI를 먼저 단독 실행해 로그인을 완료하세요.
+**사전 요구사항:** Node.js 20+ 와 인증된 CLI 1개 이상. 각 CLI를 먼저 단독 실행해 로그인을 완료하세요. Kimi Code 0.29.1 npm 배포판은 별도로 Node.js 22.19+가 필요하며, 아래 공식 설치 스크립트도 사용할 수 있습니다.
 
 ## 지원 Provider
 
@@ -72,19 +72,21 @@ npm run dev:dashboard  # 대시보드   → http://localhost:5300
 | ~~Gemini CLI~~ *(단종)* | — | 아래 **Antigravity CLI** 사용 — Gemini CLI는 Google이 단종 |
 | [Antigravity CLI](https://antigravity.google/) | Google AI Pro / Ultra | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` |
 | [Grok Build CLI](https://x.ai/cli) | SuperGrok / X Premium+ | `curl -fsSL https://x.ai/cli/install.sh \| bash` |
+| [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code) | Kimi Code 멤버십 / API key | `curl -fsSL https://code.kimi.com/kimi-code/install.sh \| bash` |
 | **HTTP** | OpenAI 호환 서버 | 대시보드에서 추가 (vLLM, Ollama, MLX, LM Studio…) |
 | **Plugin** | 커스텀 CLI | [플러그인 가이드](./plugins/README.md) |
 
-### Antigravity·Grok 호환성
+### Antigravity·Grok·Kimi 호환성
 
 | Provider | 검증 버전 | 현재 연동 범위 |
 |---|---|---|
 | Antigravity (`agy`) | 1.1.7 | Gemini 3.6/3.5 Flash·3.1 Pro effort 변형, Claude Sonnet/Opus, GPT-OSS 매핑; 네이티브 `json`/`stream-json`; input·cache·output·thinking 실제 토큰 사용량 |
 | Grok Build (`grok`) | 0.2.112 | `grok-4.5` 및 호환용 `grok-build` 별칭; 네이티브 `json`/`streaming-json`; 실제 토큰 사용량; 800KB 초과 프롬프트의 `--prompt-file` 전달 |
+| Kimi Code (`kimi`) | 0.29.1 | `kimi-for-coding`, high-speed, K3, K3-256k 별칭; 네이티브 `stream-json` assistant 단계; K3 `low`/`high`/`max` 추론; 추정 토큰 사용량 |
 
-두 provider 모두 `reasoning_effort`를 지원합니다. 현재 CLI 지원 범위는 `low`, `medium`, `high`이므로 `xhigh`와 `max` 요청은 안전하게 `high`로 정규화합니다. 모델 매핑 편집기와 Playground에서도 설정할 수 있습니다.
+Antigravity와 Grok은 `low`, `medium`, `high`를 지원해 `xhigh`와 `max` 요청을 `high`로 정규화합니다. Kimi K3는 `low`, `high`, `max`를 사용하므로 `medium`은 `high`, `xhigh`는 `max`로 변환합니다. 모델 매핑 편집기와 Playground에서도 설정할 수 있습니다.
 
-업그레이드 후 최초 기동 시 내장 레거시 매핑을 자동 마이그레이션합니다. 기존 Antigravity 표시명은 안정적인 model-family slug로 바꾸고, `grok-build`는 `grok-4.5`로 전환하며, 제거된 기본 `grok-composer` 매핑은 비활성화합니다. 사용자가 만든 커스텀 매핑은 덮어쓰지 않습니다. CLI 카탈로그는 계정과 릴리스에 따라 달라질 수 있으므로 CLI를 업그레이드한 뒤 `agy models`와 `grok models`를 확인하세요.
+업그레이드 후 최초 기동 시 내장 레거시 매핑을 자동 마이그레이션하고 Kimi 별칭을 추가하되, 사용자가 만든 매핑은 덮어쓰지 않습니다. Kimi의 `actual_model`은 원시 API 모델 ID가 아니라 `kimi-code/k3` 같은 CLI alias여야 합니다. Kimi `stream-json`에는 토큰 사용량이 없어 프록시는 UTF-8 크기 기반 추정치를 기록합니다. 또한 prompt mode는 Kimi를 자동 권한 모드로 실행하므로 신뢰하지 않는 요청에는 격리된 `working_dir`을 설정하세요.
 
 ## 사용법
 

@@ -452,6 +452,8 @@ parserRegistry.set('gemini', () => new GeminiStreamParser());
 parserRegistry.set('agy', () => new PlainTextParser());
 // GrokProvider가 json/streaming-json을 직접 처리하므로 line parser는 fallback 계약용.
 parserRegistry.set('grok', () => new PlainTextParser());
+// KimiProvider가 stream-json assistant 레코드를 직접 처리하므로 fallback 계약용.
+parserRegistry.set('kimi', () => new PlainTextParser());
 
 // 플러그인에서 커스텀 파서를 등록할 때 사용
 export function registerParser(provider: string, factory: () => StreamParser): void {

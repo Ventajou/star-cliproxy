@@ -157,6 +157,26 @@ providers:
     #                                       # 주의: prompt 내 악성 지시가 working_dir 범위 안에서 실행될 수 있음
     # working_dir: "/path/to/safe-workspace"  # 파일 시스템 격리 권장 (--always-approve 사용 시 권장)
 
+  # Moonshot AI Kimi Code CLI (`kimi`) — @moonshot-ai/kimi-code 0.29.1 기준.
+  # 설치: curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash
+  # 인증: 단독으로 `kimi login` 또는 `kimi` 실행 후 /login (OAuth/API key).
+  #
+  # 동작:
+  #   - `-p` headless + `--output-format stream-json`으로 assistant/tool/meta NDJSON을 파싱한다.
+  #   - actual_model은 CLI model alias(`kimi-code/...`)여야 한다. 아래 기본 매핑 참고.
+  #   - K3/K3-256k reasoning_effort: low→low, medium/high→high, xhigh/max→max.
+  #   - CLI가 token usage를 출력하지 않아 API usage는 UTF-8 바이트 기반 추정치다.
+  #   - 요청 도중 자체 업데이트를 막기 위해 KIMI_CODE_NO_AUTO_UPDATE=1을 자동 주입한다.
+  #   - prompt mode는 내부적으로 auto permission mode를 사용하므로 Kimi 도구가 무인 실행될 수 있다.
+  kimi:
+    enabled: true
+    cli_path: "kimi"
+    default_model: "kimi-code/kimi-for-coding"  # 모든 회원 대상 coding 모델
+    max_concurrent: 5
+    timeout_ms: 300000
+    extra_args: []
+    # working_dir: "/path/to/isolated-workspace" # 에이전틱 파일/명령 실행을 고려해 격리 디렉터리 권장
+
 # 플러그인: 커스텀 프로바이더를 코드 수정 없이 추가
 # plugins/ 디렉토리에 플러그인을 만들고 여기에 등록
 # 자세한 가이드: plugins/README.md, 예제: plugins/example-plugin/
@@ -183,6 +203,8 @@ rate_limits:
       rpm: 20
     grok:
       rpm: 20
+    kimi:
+      rpm: 20
 
 cache:
   enabled: true
@@ -202,6 +224,7 @@ model_mappings:
   #   - Claude  : --effort <level>           (low/medium/high/xhigh/max 지원)
   #   - Codex   : -c model_reasoning_effort  (low/medium/high 지원, xhigh/max는 high로 폴백)
   #   - Copilot : --effort <level>           (low/medium/high/xhigh 지원, max는 xhigh로 폴백)
+  #   - Kimi K3 : KIMI_MODEL_THINKING_EFFORT (low/high/max; medium→high, xhigh→max)
   #   - Gemini  : 미지원 (필드 무시)
   # 생략하면 각 CLI의 기본 동작을 따른다. CLI 모드에서만 적용 (App Server / SDK 모드 제외).
   #
@@ -309,3 +332,25 @@ model_mappings:
     provider: "grok"
     actual_model: "grok-4.5"
     reasoning_effort: "high"
+
+  # Moonshot AI Kimi Code — actual_model은 API model ID가 아니라 CLI model alias다.
+  - alias: "kimi-coding"
+    provider: "kimi"
+    actual_model: "kimi-code/kimi-for-coding"
+  - alias: "kimi-coding-highspeed"
+    provider: "kimi"
+    actual_model: "kimi-code/kimi-for-coding-highspeed"
+  - alias: "kimi-k3"
+    provider: "kimi"
+    actual_model: "kimi-code/k3"
+  - alias: "kimi-k3-low"
+    provider: "kimi"
+    actual_model: "kimi-code/k3"
+    reasoning_effort: "low"
+  - alias: "kimi-k3-max"
+    provider: "kimi"
+    actual_model: "kimi-code/k3"
+    reasoning_effort: "max"
+  - alias: "kimi-k3-256k"
+    provider: "kimi"
+    actual_model: "kimi-code/k3-256k"

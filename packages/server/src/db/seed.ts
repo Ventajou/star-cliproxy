@@ -6,6 +6,7 @@ import { apiKeys, modelMappings, settings } from './schema.js';
 import { hashApiKey, getKeyPrefix } from '../middleware/auth.js';
 
 const CLI_MODEL_MIGRATION_KEY = 'migration.cli-model-catalog-2026-07';
+const KIMI_CATALOG_MIGRATION_KEY = 'migration.kimi-provider-catalog-2026-07';
 
 interface SeedMapping {
   alias: string;
@@ -28,6 +29,15 @@ const CURRENT_CATALOG_ADDITIONS: SeedMapping[] = [
   { alias: 'agy-gpt-oss', provider: 'agy', actual_model: 'gpt-oss-120b-medium' },
   { alias: 'grok-4.5', provider: 'grok', actual_model: 'grok-4.5' },
   { alias: 'grok-build-high', provider: 'grok', actual_model: 'grok-4.5', reasoning_effort: 'high' },
+];
+
+const KIMI_CATALOG_ADDITIONS: SeedMapping[] = [
+  { alias: 'kimi-coding', provider: 'kimi', actual_model: 'kimi-code/kimi-for-coding' },
+  { alias: 'kimi-coding-highspeed', provider: 'kimi', actual_model: 'kimi-code/kimi-for-coding-highspeed' },
+  { alias: 'kimi-k3', provider: 'kimi', actual_model: 'kimi-code/k3' },
+  { alias: 'kimi-k3-low', provider: 'kimi', actual_model: 'kimi-code/k3', reasoning_effort: 'low' },
+  { alias: 'kimi-k3-max', provider: 'kimi', actual_model: 'kimi-code/k3', reasoning_effort: 'max' },
+  { alias: 'kimi-k3-256k', provider: 'kimi', actual_model: 'kimi-code/k3-256k' },
 ];
 
 function normalizeLegacyBuiltinMapping(mapping: SeedMapping): SeedMapping | null {
@@ -133,6 +143,41 @@ async function migrateBuiltinCliMappings(): Promise<void> {
   });
 }
 
+async function seedKimiCatalog(): Promise<void> {
+  const db = getDatabase();
+  const alreadyApplied = await db
+    .select({ key: settings.key })
+    .from(settings)
+    .where(eq(settings.key, KIMI_CATALOG_MIGRATION_KEY))
+    .limit(1);
+  if (alreadyApplied.length > 0) return;
+
+  const now = new Date().toISOString();
+  const existing = await db.select({ alias: modelMappings.alias }).from(modelMappings);
+  const aliases = new Set(existing.map((mapping) => mapping.alias));
+  for (const mapping of KIMI_CATALOG_ADDITIONS) {
+    if (aliases.has(mapping.alias)) continue;
+    await db.insert(modelMappings).values({
+      id: nanoid(),
+      alias: mapping.alias,
+      provider: mapping.provider,
+      actualModel: mapping.actual_model,
+      displayName: mapping.alias,
+      reasoningEffort: mapping.reasoning_effort ?? null,
+      priority: 0,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  await db.insert(settings).values({
+    key: KIMI_CATALOG_MIGRATION_KEY,
+    value: now,
+    updatedAt: now,
+  });
+}
+
 export async function seedDatabase(config: AppConfig): Promise<void> {
   const db = getDatabase();
 
@@ -165,6 +210,7 @@ export async function seedDatabase(config: AppConfig): Promise<void> {
   // (이슈 #38: "매 재시작 강제 upsert" 제안을 검토 후 additive로 채택.)
   // [followup] config에서 제거/수정한 매핑은 자동 삭제·갱신되지 않는다(추가만). 정리는 대시보드에서.
   await migrateBuiltinCliMappings();
+  await seedKimiCatalog();
 
   const existingMappings = await db
     .select({ alias: modelMappings.alias })

@@ -45,6 +45,14 @@ const ICON_PATHS: Record<string, ReactNode> = {
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 17V8m-3 3l3-3 3 3" />
     </>
   ),
+  // Kimi — 달의 초승달 형태를 단순화
+  kimi: (
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M20 15.2A8.5 8.5 0 118.8 4a7 7 0 0011.2 11.2z"
+    />
+  ),
 };
 
 const STYLE_MAP: Record<string, ProviderStyle> = {
@@ -77,6 +85,12 @@ const STYLE_MAP: Record<string, ProviderStyle> = {
     accent: 'bg-cyan-500',
     icon: ICON_PATHS.agy,
     label: 'Antigravity',
+  },
+  kimi: {
+    chip: 'bg-indigo-100 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-300/60 dark:border-indigo-500/30',
+    accent: 'bg-indigo-500',
+    icon: ICON_PATHS.kimi,
+    label: 'Kimi Code',
   },
 };
 
