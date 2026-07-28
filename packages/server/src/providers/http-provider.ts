@@ -26,6 +26,8 @@ export class HttpProvider extends BaseProvider {
   readonly name: string;
   override readonly endpointTypes = ['chat', 'embeddings', 'tts', 'rerank'] as const;
   private httpConfig: HttpProviderConfig;
+  /** 업스트림에서 마지막으로 통한 rerank 페이로드 규격 (없으면 TEI부터 시도) */
+  private rerankWireFormat: RerankWireFormat | null = null;
 
   constructor(providerName: string, httpConfig: HttpProviderConfig) {
     // BaseProvider에 최소한의 ProviderConfigYaml 전달 (CLI 코드 경로는 사용되지 않음)
@@ -458,18 +460,58 @@ export class HttpProvider extends BaseProvider {
   }
 
   // === Rerank 실행 ===
-  // 업스트림은 TEI(`/rerank` 네이티브 포맷, `{query, texts}` → `[{index, score, text?}]`)를 가정.
-  // base_url이 `.../v1`로 끝나는 경우 buildUrl('/rerank')은 `.../v1/rerank`가 되므로
-  // 업스트림에 `/v1/rerank`가 없다면 reverse-proxy/사이드카에서 `/rerank`로 rewrite 필요.
+  // 업스트림 rerank 규격은 두 갈래라 자동 협상한다.
+  //   - TEI 네이티브 : `{query, texts}`            → `[{index, score, text?}]`
+  //   - OpenAI 호환  : `{model, query, documents}` → `{results:[{index, relevance_score}]}`
+  //     (cliproxy 자신·Cohere·Jina 계열. cliproxy를 업스트림으로 체인하면 이쪽이다)
+  // 먼저 한 규격으로 보내고 400/422가 오면 반대 규격으로 재시도한다. 통한 규격은 기억해
+  // 이후 왕복을 1회로 줄이되, 업스트림이 교체돼 다시 어긋나면 폴백으로 자동 복구된다.
+  // base_url이 `.../v1`로 끝나면 buildUrl('/rerank')은 `.../v1/rerank`가 되므로,
+  // `/v1/rerank`가 없는 TEI 직결이라면 reverse-proxy/사이드카에서 `/rerank`로 rewrite 필요.
 
   async executeRerank(options: RerankOptions): Promise<RerankResult> {
+    const preferred = this.rerankWireFormat ?? 'tei';
+    const order: RerankWireFormat[] = preferred === 'tei' ? ['tei', 'openai'] : ['openai', 'tei'];
+
+    let attempt = await this.attemptRerank(order[0], options);
+    if (!attempt.ok && attempt.formatMismatch) {
+      attempt = await this.attemptRerank(order[1], options);
+      if (attempt.ok) this.rerankWireFormat = order[1];
+    } else if (attempt.ok) {
+      this.rerankWireFormat = order[0];
+    }
+
+    options.onDebug?.(attempt.debugInfo as DebugCaptureInfo);
+    if (!attempt.ok) throw attempt.error;
+    return attempt.result;
+  }
+
+  /**
+   * rerank 1회 시도. 던지지 않고 결과를 반환해 호출부가 폴백 여부를 판단하게 한다.
+   * (onDebug는 호출부가 최종 시도분만 1회 호출 — 기존 계약 유지)
+   */
+  private async attemptRerank(
+    format: RerankWireFormat,
+    options: RerankOptions,
+  ): Promise<RerankAttempt> {
     const url = this.buildUrl('/rerank');
     const headers = this.buildHeaders();
-    const body: Record<string, unknown> = {
-      query: options.query,
-      texts: options.documents,
-    };
-    if (options.returnDocuments) body.return_text = true;
+    const body: Record<string, unknown> =
+      format === 'openai'
+        ? {
+            model: options.model,
+            query: options.query,
+            documents: options.documents,
+            ...(options.returnDocuments ? { return_documents: true } : {}),
+            ...(typeof options.topN === 'number' && options.topN > 0
+              ? { top_n: options.topN }
+              : {}),
+          }
+        : {
+            query: options.query,
+            texts: options.documents,
+            ...(options.returnDocuments ? { return_text: true } : {}),
+          };
 
     const debugInfo: Partial<DebugCaptureInfo> = {
       cliArgs: [],
@@ -483,10 +525,8 @@ export class HttpProvider extends BaseProvider {
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.httpConfig.timeout_ms);
-
-    if (options.signal) {
-      options.signal.addEventListener('abort', () => controller.abort(), { once: true });
-    }
+    const onAbort = () => controller.abort();
+    options.signal?.addEventListener('abort', onAbort, { once: true });
 
     try {
       const response = await fetch(url, {
@@ -497,75 +537,105 @@ export class HttpProvider extends BaseProvider {
       });
 
       const rawText = await response.text();
-      let responseBody: TeiRerankResponse;
+      debugInfo.rawResponseText = rawText;
+
+      let parsed: unknown;
       try {
-        responseBody = JSON.parse(rawText) as TeiRerankResponse;
+        parsed = JSON.parse(rawText);
       } catch {
-        debugInfo.rawResponseText = rawText;
         debugInfo.httpResponse = {
           status: response.status,
           headers: Object.fromEntries(response.headers.entries()),
         };
-        options.onDebug?.(debugInfo as DebugCaptureInfo);
-        throw new Error(`${this.name}: Invalid JSON response: ${rawText.slice(0, 200)}`);
+        return {
+          ok: false,
+          formatMismatch: false,
+          debugInfo,
+          error: new Error(`${this.name}: Invalid JSON response: ${rawText.slice(0, 200)}`),
+        };
       }
 
-      debugInfo.rawResponseText = rawText;
       debugInfo.httpResponse = {
         status: response.status,
         headers: Object.fromEntries(response.headers.entries()),
-        body: responseBody,
+        body: parsed as Record<string, unknown>,
       };
 
       if (!response.ok) {
-        options.onDebug?.(debugInfo as DebugCaptureInfo);
-        const errObj = (responseBody as unknown as Record<string, unknown>)?.error;
+        const errObj = (parsed as Record<string, unknown>)?.error;
         const errMsg = errObj ? JSON.stringify(errObj) : `HTTP ${response.status}`;
-        throw new Error(`${this.name} HTTP error: ${errMsg}`);
+        return {
+          ok: false,
+          // 400/422 = 업스트림이 페이로드를 못 알아들은 것 → 반대 규격으로 재시도할 가치가 있다.
+          // 401/403(인증)·404(경로 없음)·429·5xx는 규격을 바꿔도 같은 결과라 재시도하지 않는다.
+          formatMismatch: response.status === 400 || response.status === 422,
+          debugInfo,
+          error: new Error(`${this.name} HTTP error: ${errMsg}`),
+        };
       }
 
-      options.onDebug?.(debugInfo as DebugCaptureInfo);
+      const normalized = normalizeRerankResponse(parsed);
+      if (!normalized) {
+        return {
+          ok: false,
+          // 200인데 형태를 모르겠다면 규격이 어긋난 것 — 반대 규격으로 한 번 더.
+          formatMismatch: true,
+          debugInfo,
+          error: new Error(
+            `${this.name}: Unrecognized rerank response shape: ${rawText.slice(0, 200)}`,
+          ),
+        };
+      }
 
-      const items = Array.isArray(responseBody) ? responseBody : [];
-      let results = items.map((item) => ({
+      let results = normalized.items.map((item) => ({
         index: item.index,
-        relevanceScore: item.score,
-        ...(options.returnDocuments && typeof item.text === 'string' ? { document: item.text } : {}),
+        relevanceScore: item.relevanceScore,
+        ...(options.returnDocuments && typeof item.document === 'string'
+          ? { document: item.document }
+          : {}),
       }));
 
-      // TEI는 보통 score 내림차순 정렬해 반환하지만, 일관성을 위해 명시적으로 정렬.
+      // 업스트림이 보통 내림차순으로 주지만, 일관성을 위해 명시적으로 정렬.
       results.sort((a, b) => b.relevanceScore - a.relevanceScore);
 
       if (typeof options.topN === 'number' && options.topN > 0) {
         results = results.slice(0, options.topN);
       }
 
-      // TEI는 usage를 반환하지 않으므로 대략적으로 추정 (query + 모든 문서 길이의 워드 수)
-      const approxTokens = Math.ceil(
-        (options.query.length + options.documents.reduce((sum, d) => sum + d.length, 0)) / 4,
-      );
+      // TEI는 usage를 반환하지 않으므로 없을 때만 대략 추정 (문자 수 / 4).
+      const totalTokens =
+        normalized.totalTokens ??
+        Math.ceil(
+          (options.query.length + options.documents.reduce((sum, d) => sum + d.length, 0)) / 4,
+        );
 
       return {
-        results,
-        model: options.model,
-        usage: {
-          totalTokens: approxTokens,
-        },
+        ok: true,
+        debugInfo,
+        result: { results, model: options.model, usage: { totalTokens } },
       };
     } catch (error) {
-      clearTimeout(timeoutId);
       if (error instanceof Error && error.name === 'AbortError') {
-        if (options.signal?.aborted) {
-          throw new Error('Request cancelled');
-        }
-        throw new Error(`${this.name} HTTP request timed out after ${this.httpConfig.timeout_ms}ms`);
+        return {
+          ok: false,
+          formatMismatch: false,
+          debugInfo,
+          error: options.signal?.aborted
+            ? new Error('Request cancelled')
+            : new Error(
+                `${this.name} HTTP request timed out after ${this.httpConfig.timeout_ms}ms`,
+              ),
+        };
       }
-      if (!debugInfo.httpResponse) {
-        options.onDebug?.(debugInfo as DebugCaptureInfo);
-      }
-      throw error;
+      return {
+        ok: false,
+        formatMismatch: false,
+        debugInfo,
+        error: error instanceof Error ? error : new Error(String(error)),
+      };
     } finally {
       clearTimeout(timeoutId);
+      options.signal?.removeEventListener('abort', onAbort);
     }
   }
 
@@ -802,10 +872,75 @@ interface OpenAIEmbeddingResponse {
   };
 }
 
-// TEI rerank 응답: `[{index, score, text?}]` 형식. 에러 시 `{error: ...}` 객체.
-type TeiRerankResponse = Array<{ index: number; score: number; text?: string }> & {
-  error?: unknown;
-};
+// rerank 업스트림 페이로드 규격. TEI 네이티브 vs OpenAI 호환(cliproxy·Cohere·Jina).
+type RerankWireFormat = 'tei' | 'openai';
+
+// attemptRerank의 결과 — 던지는 대신 반환해 호출부가 폴백을 결정한다.
+type RerankAttempt =
+  | { ok: true; result: RerankResult; debugInfo: Partial<DebugCaptureInfo> }
+  | {
+      ok: false;
+      /** 페이로드 규격 불일치로 보이는가 (반대 규격 재시도 대상) */
+      formatMismatch: boolean;
+      error: Error;
+      debugInfo: Partial<DebugCaptureInfo>;
+    };
+
+type NormalizedRerankItem = { index: number; relevanceScore: number; document?: string };
+
+/**
+ * TEI/OpenAI 두 응답 형태를 공통 구조로 정규화. 어느 쪽도 아니면 null.
+ * (요청 규격과 응답 규격이 항상 짝을 이루진 않으므로 응답만 보고 판별한다)
+ */
+function normalizeRerankResponse(
+  parsed: unknown,
+): { items: NormalizedRerankItem[]; totalTokens?: number } | null {
+  // TEI: 최상위가 배열
+  if (Array.isArray(parsed)) {
+    const items: NormalizedRerankItem[] = [];
+    for (const raw of parsed) {
+      const item = raw as { index?: unknown; score?: unknown; text?: unknown };
+      if (typeof item?.index !== 'number' || typeof item?.score !== 'number') return null;
+      items.push({
+        index: item.index,
+        relevanceScore: item.score,
+        ...(typeof item.text === 'string' ? { document: item.text } : {}),
+      });
+    }
+    return { items };
+  }
+
+  // OpenAI/Cohere 호환: `{results: [...], usage?: {total_tokens}}`
+  const root = parsed as { results?: unknown; usage?: { total_tokens?: unknown } } | null;
+  if (!Array.isArray(root?.results)) return null;
+
+  const items: NormalizedRerankItem[] = [];
+  for (const raw of root.results) {
+    const item = raw as {
+      index?: unknown;
+      relevance_score?: unknown;
+      score?: unknown;
+      document?: unknown;
+    };
+    const score = typeof item?.relevance_score === 'number' ? item.relevance_score : item?.score;
+    if (typeof item?.index !== 'number' || typeof score !== 'number') return null;
+    // Cohere는 document를 `{text}` 객체로, 그 외는 문자열로 준다.
+    const doc =
+      typeof item.document === 'string'
+        ? item.document
+        : typeof (item.document as { text?: unknown })?.text === 'string'
+          ? ((item.document as { text: string }).text)
+          : undefined;
+    items.push({
+      index: item.index,
+      relevanceScore: score,
+      ...(doc !== undefined ? { document: doc } : {}),
+    });
+  }
+
+  const total = root?.usage?.total_tokens;
+  return { items, ...(typeof total === 'number' ? { totalTokens: total } : {}) };
+}
 
 // === 유틸리티 ===
 
