@@ -18,7 +18,13 @@ COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
 COPY packages/dashboard/package.json packages/dashboard/
-RUN npm ci
+# node-pty는 linux/arm64 prebuild를 제공하지 않아 node-gyp 컴파일이 필요하다.
+# 빌드 툴체인은 .build-deps로 묶어 설치 직후 제거하고, 컴파일된 .node가 런타임에
+# 링크하는 libstdc++만 영구 설치해 최종 이미지 크기를 유지한다.
+RUN apk add --no-cache libstdc++ \
+ && apk add --no-cache --virtual .build-deps python3 make g++ \
+ && npm ci \
+ && apk del .build-deps
 COPY tsconfig*.json ./
 COPY packages/shared packages/shared
 RUN npm run build --workspace=packages/shared
