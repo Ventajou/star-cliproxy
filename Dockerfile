@@ -37,9 +37,11 @@ COPY packages/server packages/server
 RUN mkdir -p /app/data /app/logs && chown -R node:node /app/data /app/logs
 USER node
 EXPOSE 8300
-# busybox wget(alpine 내장)으로 헬스 엔드포인트 확인
+# busybox wget(alpine 내장)으로 헬스 엔드포인트 확인.
+# `localhost`가 아니라 `127.0.0.1`을 쓴다 — busybox wget은 /etc/hosts의 ::1을 먼저 시도하는데
+# 서버는 0.0.0.0(IPv4)에만 바인딩하므로 localhost로는 Connection refused가 난다.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD wget -qO- http://localhost:8300/health || exit 1
+  CMD wget -qO- http://127.0.0.1:8300/health || exit 1
 CMD ["npx", "tsx", "packages/server/src/index.ts"]
 
 # ── 대시보드 빌드 ───────────────────────────────────────
