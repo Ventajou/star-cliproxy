@@ -18,7 +18,13 @@ COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
 COPY packages/dashboard/package.json packages/dashboard/
-RUN npm ci
+# node-pty는 linux/arm64 prebuild를 제공하지 않아 node-gyp 컴파일이 필요하다.
+# 빌드 툴체인은 .build-deps로 묶어 설치 직후 제거하고, 컴파일된 .node가 런타임에
+# 링크하는 libstdc++만 영구 설치해 최종 이미지 크기를 유지한다.
+RUN apk add --no-cache libstdc++ \
+ && apk add --no-cache --virtual .build-deps python3 make g++ \
+ && npm ci \
+ && apk del .build-deps
 COPY tsconfig*.json ./
 COPY packages/shared packages/shared
 RUN npm run build --workspace=packages/shared
@@ -31,9 +37,11 @@ COPY packages/server packages/server
 RUN mkdir -p /app/data /app/logs && chown -R node:node /app/data /app/logs
 USER node
 EXPOSE 8300
-# busybox wget(alpine 내장)으로 헬스 엔드포인트 확인
+# busybox wget(alpine 내장)으로 헬스 엔드포인트 확인.
+# `localhost`가 아니라 `127.0.0.1`을 쓴다 — busybox wget은 /etc/hosts의 ::1을 먼저 시도하는데
+# 서버는 0.0.0.0(IPv4)에만 바인딩하므로 localhost로는 Connection refused가 난다.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD wget -qO- http://localhost:8300/health || exit 1
+  CMD wget -qO- http://127.0.0.1:8300/health || exit 1
 CMD ["npx", "tsx", "packages/server/src/index.ts"]
 
 # ── 대시보드 빌드 ───────────────────────────────────────

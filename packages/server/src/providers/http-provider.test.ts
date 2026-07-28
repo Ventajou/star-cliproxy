@@ -210,3 +210,142 @@ describe('HttpProvider.executeStream - function calling', () => {
     expect(events.some((e) => e.type === 'text_delta' && e.text === 'leak')).toBe(false);
   });
 });
+
+describe('HttpProvider.executeRerank - 업스트림 규격 협상', () => {
+  const rerankConfig: HttpProviderConfig = {
+    ...baseConfig,
+    endpoint_type: 'rerank',
+    default_model: 'bge-reranker',
+  };
+
+  /** 요청 body에 따라 응답을 달리하는 fetch 모킹. 보낸 body들을 순서대로 기록한다. */
+  function mockRerankUpstream(
+    respond: (body: any) => { status: number; payload: unknown },
+  ) {
+    const sent: any[] = [];
+    const fn = vi.fn(async (_url: string, init: any) => {
+      const body = JSON.parse(init.body as string);
+      sent.push(body);
+      const { status, payload } = respond(body);
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        headers: { entries: () => [] as [string, string][] },
+        text: async () => JSON.stringify(payload),
+      } as unknown as Response;
+    });
+    vi.stubGlobal('fetch', fn);
+    return sent;
+  }
+
+  /** TEI 규격만 받는 업스트림 (`texts` 없으면 400) */
+  const teiUpstream = (body: any) =>
+    Array.isArray(body.texts)
+      ? { status: 200, payload: [{ index: 1, score: 0.9 }, { index: 0, score: 0.1 }] }
+      : { status: 400, payload: { error: { message: 'texts is required' } } };
+
+  /** OpenAI 호환 규격만 받는 업스트림 (cliproxy 체인 — model/documents 없으면 400) */
+  const openaiUpstream = (body: any) =>
+    body.model && Array.isArray(body.documents)
+      ? {
+          status: 200,
+          payload: {
+            results: [
+              { index: 1, relevance_score: 0.8 },
+              { index: 0, relevance_score: 0.2 },
+            ],
+            usage: { total_tokens: 13 },
+          },
+        }
+      : {
+          status: 400,
+          payload: { error: { message: 'model, query, and documents (array) are required.' } },
+        };
+
+  const rerankOptions = { model: 'bge-reranker', query: 'q', documents: ['a', 'b'] };
+
+  it('TEI 업스트림은 첫 시도(TEI 규격)로 성공 — 폴백 없음', async () => {
+    const sent = mockRerankUpstream(teiUpstream);
+    const provider = new HttpProvider('test', { ...rerankConfig });
+
+    const r = await provider.executeRerank(rerankOptions);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toEqual({ query: 'q', texts: ['a', 'b'] });
+    expect(r.results.map((x) => x.index)).toEqual([1, 0]);
+    expect(r.results[0].relevanceScore).toBeCloseTo(0.9);
+  });
+
+  it('OpenAI 호환 업스트림은 400 후 OpenAI 규격으로 폴백해 성공', async () => {
+    const sent = mockRerankUpstream(openaiUpstream);
+    const provider = new HttpProvider('test', { ...rerankConfig });
+
+    const r = await provider.executeRerank(rerankOptions);
+
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toEqual({ query: 'q', texts: ['a', 'b'] }); // 1차: TEI
+    expect(sent[1]).toEqual({ model: 'bge-reranker', query: 'q', documents: ['a', 'b'] });
+    expect(r.results.map((x) => x.index)).toEqual([1, 0]);
+    expect(r.usage.totalTokens).toBe(13); // 업스트림 usage를 그대로 사용
+  });
+
+  it('통한 규격을 기억해 두 번째 호출부터는 왕복 1회', async () => {
+    const sent = mockRerankUpstream(openaiUpstream);
+    const provider = new HttpProvider('test', { ...rerankConfig });
+
+    await provider.executeRerank(rerankOptions);
+    expect(sent).toHaveLength(2);
+
+    await provider.executeRerank(rerankOptions);
+    expect(sent).toHaveLength(3); // 2회가 아니라 1회만 추가
+    expect(sent[2].model).toBe('bge-reranker');
+  });
+
+  it('401(인증 실패)은 규격 문제가 아니므로 폴백하지 않음', async () => {
+    const sent = mockRerankUpstream(() => ({
+      status: 401,
+      payload: { error: { message: 'invalid api key' } },
+    }));
+    const provider = new HttpProvider('test', { ...rerankConfig });
+
+    await expect(provider.executeRerank(rerankOptions)).rejects.toThrow(/invalid api key/);
+    expect(sent).toHaveLength(1);
+  });
+
+  it('두 규격 모두 실패하면 마지막 에러를 전파', async () => {
+    const sent = mockRerankUpstream(() => ({
+      status: 400,
+      payload: { error: { message: 'nope' } },
+    }));
+    const provider = new HttpProvider('test', { ...rerankConfig });
+
+    await expect(provider.executeRerank(rerankOptions)).rejects.toThrow(/nope/);
+    expect(sent).toHaveLength(2);
+  });
+
+  it('topN·returnDocuments가 각 규격의 필드명으로 매핑됨', async () => {
+    const sent = mockRerankUpstream(openaiUpstream);
+    const provider = new HttpProvider('test', { ...rerankConfig });
+
+    await provider.executeRerank({ ...rerankOptions, topN: 1, returnDocuments: true });
+
+    expect(sent[0]).toMatchObject({ return_text: true }); // TEI
+    expect(sent[1]).toMatchObject({ return_documents: true, top_n: 1 }); // OpenAI
+  });
+
+  it('Cohere식 document 객체({text})도 문자열로 정규화', async () => {
+    mockRerankUpstream((body) =>
+      body.model
+        ? {
+            status: 200,
+            payload: { results: [{ index: 0, relevance_score: 0.5, document: { text: 'doc-a' } }] },
+          }
+        : { status: 400, payload: { error: { message: 'need openai format' } } },
+    );
+    const provider = new HttpProvider('test', { ...rerankConfig });
+
+    const r = await provider.executeRerank({ ...rerankOptions, returnDocuments: true });
+
+    expect(r.results[0].document).toBe('doc-a');
+  });
+});
