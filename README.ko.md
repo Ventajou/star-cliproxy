@@ -86,7 +86,7 @@ npm run dev:dashboard  # 대시보드   → http://localhost:5300
 
 Antigravity와 Grok은 `low`, `medium`, `high`를 지원해 `xhigh`와 `max` 요청을 `high`로 정규화합니다. Kimi K3는 `low`, `high`, `max`를 사용하므로 `medium`은 `high`, `xhigh`는 `max`로 변환합니다. 모델 매핑 편집기와 Playground에서도 설정할 수 있습니다.
 
-업그레이드 후 최초 기동 시 내장 레거시 매핑을 자동 마이그레이션하고 Kimi 별칭을 추가하되, 사용자가 만든 매핑은 덮어쓰지 않습니다. Kimi의 `actual_model`은 원시 API 모델 ID가 아니라 `kimi-code/k3` 같은 CLI alias여야 합니다. Kimi `stream-json`에는 토큰 사용량이 없어 프록시는 UTF-8 크기 기반 추정치를 기록합니다. 또한 prompt mode는 Kimi를 자동 권한 모드로 실행하므로 신뢰하지 않는 요청에는 격리된 `working_dir`을 설정하세요.
+업그레이드 후 최초 기동 시 내장 레거시 매핑을 자동 마이그레이션하고 선별된 Kimi 별칭을 최대 2개까지만 추가하되, 사용자가 만든 매핑은 덮어쓰지 않습니다. Kimi의 `actual_model`은 원시 API 모델 ID가 아니라 `kimi-code/k3` 같은 CLI alias여야 합니다. Kimi `stream-json`에는 토큰 사용량이 없어 프록시는 UTF-8 크기 기반 추정치를 기록합니다. 또한 prompt mode는 Kimi를 자동 권한 모드로 실행하므로 신뢰하지 않는 요청에는 격리된 `working_dir`을 설정하세요.
 
 ## 사용법
 
@@ -105,6 +105,7 @@ ANTHROPIC_BASE_URL=http://localhost:8300 ANTHROPIC_API_KEY=sk-proxy-... claude
 ```
 
 모델은 **별칭**(예: `claude-sonnet`, `gpt-5`)으로 노출되어 provider + 실제 모델에 매핑됩니다. 매핑·provider·키 관리는 대시보드 또는 Admin API에서 합니다.
+내장 초기 카탈로그는 provider당 최대 2개의 매핑만 등록합니다. 모델이나 추론 프리셋이 더 필요하면 대시보드에서 추가할 수 있습니다.
 
 ## 실행 모드
 

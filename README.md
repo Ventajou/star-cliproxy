@@ -86,7 +86,7 @@ npm run dev:dashboard  # dashboard   → http://localhost:5300
 
 Antigravity and Grok accept `low`, `medium`, or `high`, so `xhigh` and `max` requests are normalized to `high`. Kimi K3 uses `low`, `high`, or `max`: `medium` becomes `high`, while `xhigh` becomes `max`. The model-mapping editor and Playground expose these settings.
 
-On the first startup after upgrading, built-in legacy mappings are migrated automatically and the Kimi aliases are added without overwriting user-created mappings. Kimi `actual_model` values are CLI aliases such as `kimi-code/k3`, not raw API model IDs. Kimi does not report token usage in `stream-json`, so the proxy marks usage using a UTF-8-size estimate. Prompt mode also runs Kimi autonomously; configure an isolated `working_dir` for untrusted requests.
+On the first startup after upgrading, built-in legacy mappings are migrated automatically and up to two curated Kimi aliases are added without overwriting user-created mappings. Kimi `actual_model` values are CLI aliases such as `kimi-code/k3`, not raw API model IDs. Kimi does not report token usage in `stream-json`, so the proxy marks usage using a UTF-8-size estimate. Prompt mode also runs Kimi autonomously; configure an isolated `working_dir` for untrusted requests.
 
 ## Usage
 
@@ -105,6 +105,7 @@ ANTHROPIC_BASE_URL=http://localhost:8300 ANTHROPIC_API_KEY=sk-proxy-... claude
 ```
 
 Models are exposed as **aliases** (e.g. `claude-sonnet`, `gpt-5`) mapping to a provider + real model. Manage mappings, providers, and keys from the dashboard or the Admin API.
+The bundled initial catalog registers at most two mappings per provider. Add any additional model or reasoning presets from the dashboard when needed.
 
 ## Execution Modes
 

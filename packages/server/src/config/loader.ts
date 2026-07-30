@@ -249,14 +249,14 @@ export function loadConfig(configPath?: string): AppConfig {
       { alias: 'copilot-gpt', provider: 'copilot', actual_model: 'gpt-5.4' },
       { alias: 'gemini-pro', provider: 'gemini', actual_model: 'gemini-2.5-pro' },
       { alias: 'gemini-flash', provider: 'gemini', actual_model: 'gemini-2.5-flash' },
-      // Antigravity 자동 모델 선택 placeholder
+      // Antigravity: 자동 최상위 + 한 단계 가벼운 명시적 모델
       { alias: 'antigravity', provider: 'agy', actual_model: 'antigravity' },
-      // xAI Grok Build — 기존 alias는 유지하되 현재 모델로 라우팅
-      { alias: 'grok-build', provider: 'grok', actual_model: 'grok-4.5' },
+      { alias: 'gemini-3.6-flash-high', provider: 'agy', actual_model: 'gemini-3.6-flash', reasoning_effort: 'high' },
+      // xAI Grok Build — 현재 카탈로그에 별도의 하위 모델이 없어 하나만 등록
       { alias: 'grok-4.5', provider: 'grok', actual_model: 'grok-4.5' },
-      // Moonshot AI Kimi Code — CLI가 요구하는 provider/model alias를 그대로 전달
-      { alias: 'kimi-coding', provider: 'kimi', actual_model: 'kimi-code/kimi-for-coding' },
+      // Moonshot AI Kimi Code — 최상위 K3 + 범용 coding 모델
       { alias: 'kimi-k3', provider: 'kimi', actual_model: 'kimi-code/k3' },
+      { alias: 'kimi-coding', provider: 'kimi', actual_model: 'kimi-code/kimi-for-coding' },
     ],
   };
 }

@@ -22,6 +22,16 @@ function writeConfig(yaml: string): string {
   return path;
 }
 
+function countMappingsByProvider(
+  mappings: Array<{ provider: string }>,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const mapping of mappings) {
+    counts.set(mapping.provider, (counts.get(mapping.provider) ?? 0) + 1);
+  }
+  return counts;
+}
+
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), 'cliproxy-config-test-'));
 });
@@ -40,6 +50,10 @@ describe('loadConfig — 기존 동작 보존', () => {
     expect(config.providers.claude.max_concurrent).toBe(DEFAULT_MAX_CONCURRENT);
     expect(config.rateLimits.global.rpm).toBe(DEFAULT_RATE_LIMIT_RPM);
     expect(config.modelMappings.length).toBeGreaterThan(0);
+    expect(
+      Array.from(countMappingsByProvider(config.modelMappings).values())
+        .every((count) => count <= 2),
+    ).toBe(true);
   });
 
   it('유효한 config 값이 그대로 반영된다', () => {
@@ -249,6 +263,10 @@ describe('loadConfig — 실제 예제 config 회귀', () => {
   it('저장소의 config.example.yaml이 검증을 통과한다', () => {
     // 프로젝트 루트의 예제 config — 스키마가 실제 사용 형태와 어긋나지 않는지 보증
     const examplePath = join(import.meta.dirname, '../../../../config.example.yaml');
-    expect(() => loadConfig(examplePath)).not.toThrow();
+    const config = loadConfig(examplePath);
+    expect(
+      Array.from(countMappingsByProvider(config.modelMappings).entries())
+        .filter(([, count]) => count > 2),
+    ).toEqual([]);
   });
 });

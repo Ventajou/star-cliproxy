@@ -79,24 +79,22 @@ describe.sequential('seedDatabase CLI model catalog migration', () => {
     });
     expect(byAlias.get('my-grok')?.actualModel).toBe('grok-build');
 
-    expect(byAlias.get('gemini-3.6-flash-medium')).toMatchObject({
+    expect(byAlias.get('antigravity')).toMatchObject({
       provider: 'agy',
-      actualModel: 'gemini-3.6-flash',
-      reasoningEffort: 'medium',
+      actualModel: 'antigravity',
     });
-    expect(byAlias.get('agy-claude-sonnet')?.actualModel).toBe('claude-sonnet-4-6');
     expect(byAlias.get('grok-4.5')?.actualModel).toBe('grok-4.5');
     expect(rows.filter((row) => row.alias === 'grok-4.5')).toHaveLength(1);
     expect(byAlias.get('kimi-coding')).toMatchObject({
       provider: 'kimi',
       actualModel: 'kimi-code/kimi-for-coding',
     });
-    expect(byAlias.get('kimi-k3-max')).toMatchObject({
+    expect(byAlias.get('kimi-k3')).toMatchObject({
       provider: 'kimi',
       actualModel: 'kimi-code/k3',
-      reasoningEffort: 'max',
     });
-    expect(byAlias.get('kimi-k3-256k')?.actualModel).toBe('kimi-code/k3-256k');
+    expect(byAlias.has('kimi-k3-max')).toBe(false);
+    expect(byAlias.has('kimi-k3-256k')).toBe(false);
     expect(rows.filter((row) => row.alias === 'kimi-k3')).toHaveLength(1);
 
     const migration = await db
@@ -110,5 +108,40 @@ describe.sequential('seedDatabase CLI model catalog migration', () => {
       .from(settings)
       .where(eq(settings.key, 'migration.kimi-provider-catalog-2026-07'));
     expect(kimiMigration).toHaveLength(1);
+  });
+
+  it('새 설치의 자동 모델 매핑은 프로바이더당 최대 2개만 등록', async () => {
+    const db = getDatabase();
+    const config = loadConfig(join(tempDir, 'missing-config.yaml'));
+
+    await seedDatabase(config);
+    // 다음 시작에서도 catalog migration이 다시 모델을 늘리지 않아야 한다.
+    await seedDatabase(config);
+
+    const rows = await db
+      .select()
+      .from(modelMappings)
+      .where(eq(modelMappings.enabled, true));
+    const aliasesByProvider = new Map<string, string[]>();
+
+    for (const row of rows) {
+      const aliases = aliasesByProvider.get(row.provider) ?? [];
+      aliases.push(row.alias);
+      aliasesByProvider.set(row.provider, aliases);
+    }
+
+    expect(
+      Array.from(aliasesByProvider.entries())
+        .filter(([, aliases]) => aliases.length > 2),
+    ).toEqual([]);
+    expect(aliasesByProvider.get('agy')?.sort()).toEqual([
+      'antigravity',
+      'gemini-3.6-flash-high',
+    ]);
+    expect(aliasesByProvider.get('grok')).toEqual(['grok-4.5']);
+    expect(aliasesByProvider.get('kimi')?.sort()).toEqual([
+      'kimi-coding',
+      'kimi-k3',
+    ]);
   });
 });

@@ -7,6 +7,7 @@ import { hashApiKey, getKeyPrefix } from '../middleware/auth.js';
 
 const CLI_MODEL_MIGRATION_KEY = 'migration.cli-model-catalog-2026-07';
 const KIMI_CATALOG_MIGRATION_KEY = 'migration.kimi-provider-catalog-2026-07';
+const MAX_AUTOMATIC_MAPPINGS_PER_PROVIDER = 2;
 
 interface SeedMapping {
   alias: string;
@@ -16,29 +17,62 @@ interface SeedMapping {
 }
 
 const CURRENT_CATALOG_ADDITIONS: SeedMapping[] = [
-  { alias: 'gemini-3.6-flash-low', provider: 'agy', actual_model: 'gemini-3.6-flash', reasoning_effort: 'low' },
-  { alias: 'gemini-3.6-flash-medium', provider: 'agy', actual_model: 'gemini-3.6-flash', reasoning_effort: 'medium' },
+  // 자동 선택되는 최상위 모델 + 한 단계 가벼운 명시적 모델만 기본 제공한다.
+  { alias: 'antigravity', provider: 'agy', actual_model: 'antigravity' },
   { alias: 'gemini-3.6-flash-high', provider: 'agy', actual_model: 'gemini-3.6-flash', reasoning_effort: 'high' },
-  { alias: 'gemini-3.5-flash-low', provider: 'agy', actual_model: 'gemini-3.5-flash', reasoning_effort: 'low' },
-  { alias: 'gemini-3.5-flash-medium', provider: 'agy', actual_model: 'gemini-3.5-flash', reasoning_effort: 'medium' },
-  { alias: 'gemini-3.5-flash-high', provider: 'agy', actual_model: 'gemini-3.5-flash', reasoning_effort: 'high' },
-  { alias: 'gemini-3.1-pro-low', provider: 'agy', actual_model: 'gemini-3.1-pro', reasoning_effort: 'low' },
-  { alias: 'gemini-3.1-pro-high', provider: 'agy', actual_model: 'gemini-3.1-pro', reasoning_effort: 'high' },
-  { alias: 'agy-claude-sonnet', provider: 'agy', actual_model: 'claude-sonnet-4-6' },
-  { alias: 'agy-claude-opus', provider: 'agy', actual_model: 'claude-opus-4-6-thinking' },
-  { alias: 'agy-gpt-oss', provider: 'agy', actual_model: 'gpt-oss-120b-medium' },
+  // 현재 Grok CLI 카탈로그에는 별도의 하위 모델이 없다.
   { alias: 'grok-4.5', provider: 'grok', actual_model: 'grok-4.5' },
-  { alias: 'grok-build-high', provider: 'grok', actual_model: 'grok-4.5', reasoning_effort: 'high' },
 ];
 
 const KIMI_CATALOG_ADDITIONS: SeedMapping[] = [
-  { alias: 'kimi-coding', provider: 'kimi', actual_model: 'kimi-code/kimi-for-coding' },
-  { alias: 'kimi-coding-highspeed', provider: 'kimi', actual_model: 'kimi-code/kimi-for-coding-highspeed' },
   { alias: 'kimi-k3', provider: 'kimi', actual_model: 'kimi-code/k3' },
-  { alias: 'kimi-k3-low', provider: 'kimi', actual_model: 'kimi-code/k3', reasoning_effort: 'low' },
-  { alias: 'kimi-k3-max', provider: 'kimi', actual_model: 'kimi-code/k3', reasoning_effort: 'max' },
-  { alias: 'kimi-k3-256k', provider: 'kimi', actual_model: 'kimi-code/k3-256k' },
+  { alias: 'kimi-coding', provider: 'kimi', actual_model: 'kimi-code/kimi-for-coding' },
 ];
+
+async function insertAutomaticCatalogMappings(
+  mappings: SeedMapping[],
+  now: string,
+): Promise<void> {
+  const db = getDatabase();
+  const existing = await db
+    .select({
+      alias: modelMappings.alias,
+      provider: modelMappings.provider,
+      enabled: modelMappings.enabled,
+    })
+    .from(modelMappings);
+  const aliases = new Set(existing.map((mapping) => mapping.alias));
+  const enabledCounts = new Map<string, number>();
+
+  for (const mapping of existing) {
+    if (!mapping.enabled) continue;
+    enabledCounts.set(mapping.provider, (enabledCounts.get(mapping.provider) ?? 0) + 1);
+  }
+
+  for (const mapping of mappings) {
+    if (
+      aliases.has(mapping.alias)
+      || (enabledCounts.get(mapping.provider) ?? 0) >= MAX_AUTOMATIC_MAPPINGS_PER_PROVIDER
+    ) {
+      continue;
+    }
+
+    await db.insert(modelMappings).values({
+      id: nanoid(),
+      alias: mapping.alias,
+      provider: mapping.provider,
+      actualModel: mapping.actual_model,
+      displayName: mapping.alias,
+      reasoningEffort: mapping.reasoning_effort ?? null,
+      priority: 0,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    aliases.add(mapping.alias);
+    enabledCounts.set(mapping.provider, (enabledCounts.get(mapping.provider) ?? 0) + 1);
+  }
+}
 
 function normalizeLegacyBuiltinMapping(mapping: SeedMapping): SeedMapping | null {
   if (mapping.provider === 'grok') {
@@ -118,23 +152,7 @@ async function migrateBuiltinCliMappings(): Promise<void> {
       eq(modelMappings.actualModel, 'grok-composer-2.5-fast'),
     ));
 
-  const existing = await db.select({ alias: modelMappings.alias }).from(modelMappings);
-  const aliases = new Set(existing.map((mapping) => mapping.alias));
-  for (const mapping of CURRENT_CATALOG_ADDITIONS) {
-    if (aliases.has(mapping.alias)) continue;
-    await db.insert(modelMappings).values({
-      id: nanoid(),
-      alias: mapping.alias,
-      provider: mapping.provider,
-      actualModel: mapping.actual_model,
-      displayName: mapping.alias,
-      reasoningEffort: mapping.reasoning_effort ?? null,
-      priority: 0,
-      enabled: true,
-      createdAt: now,
-      updatedAt: now,
-    });
-  }
+  await insertAutomaticCatalogMappings(CURRENT_CATALOG_ADDITIONS, now);
 
   await db.insert(settings).values({
     key: CLI_MODEL_MIGRATION_KEY,
@@ -153,23 +171,7 @@ async function seedKimiCatalog(): Promise<void> {
   if (alreadyApplied.length > 0) return;
 
   const now = new Date().toISOString();
-  const existing = await db.select({ alias: modelMappings.alias }).from(modelMappings);
-  const aliases = new Set(existing.map((mapping) => mapping.alias));
-  for (const mapping of KIMI_CATALOG_ADDITIONS) {
-    if (aliases.has(mapping.alias)) continue;
-    await db.insert(modelMappings).values({
-      id: nanoid(),
-      alias: mapping.alias,
-      provider: mapping.provider,
-      actualModel: mapping.actual_model,
-      displayName: mapping.alias,
-      reasoningEffort: mapping.reasoning_effort ?? null,
-      priority: 0,
-      enabled: true,
-      createdAt: now,
-      updatedAt: now,
-    });
-  }
+  await insertAutomaticCatalogMappings(KIMI_CATALOG_ADDITIONS, now);
 
   await db.insert(settings).values({
     key: KIMI_CATALOG_MIGRATION_KEY,
