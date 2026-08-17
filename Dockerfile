@@ -23,7 +23,7 @@ COPY packages/dashboard/package.json packages/dashboard/
 # Debian packages needed for node-gyp (node-pty) + curl for Grok install later
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      python3 make g++ curl ca-certificates \
+      python3 make g++ curl ca-certificates nano \
  && npm ci \
  && apt-get purge -y python3 make g++ \
  && apt-get autoremove -y \
