@@ -14,17 +14,21 @@
 # ── 공통 베이스: 의존성 + 소스 ──────────────────────────
 FROM node:22-bookworm AS base
 WORKDIR /app
+
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
 COPY packages/dashboard/package.json packages/dashboard/
-# node-pty는 linux/arm64 prebuild를 제공하지 않아 node-gyp 컴파일이 필요하다.
-# 빌드 툴체인은 .build-deps로 묶어 설치 직후 제거하고, 컴파일된 .node가 런타임에
-# 링크하는 libstdc++만 영구 설치해 최종 이미지 크기를 유지한다.
-RUN apk add --no-cache libstdc++ \
- && apk add --no-cache --virtual .build-deps python3 make g++ \
+
+# Debian packages needed for node-gyp (node-pty) + curl for Grok install later
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      python3 make g++ curl ca-certificates \
  && npm ci \
- && apk del .build-deps
+ && apt-get purge -y python3 make g++ \
+ && apt-get autoremove -y \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY tsconfig*.json ./
 COPY packages/shared packages/shared
 RUN npm run build --workspace=packages/shared
@@ -37,16 +41,17 @@ RUN curl -fsSL https://x.ai/cli/install.sh | bash \
  && ln -sf /root/.grok/bin/grok /usr/local/bin/grok \
  && chmod +x /usr/local/bin/grok
 
-# 비root 실행: node 이미지의 내장 node 사용자(uid 1000)로 권한 강등.
-# SQLite/로그 기록 경로(data, logs)만 소유권 부여 (node_modules는 read-only 사용).
-RUN mkdir -p /app/data /app/logs && chown -R node:node /app/data /app/logs
+RUN mkdir -p /app/data /app/logs /home/node/.grok \
+ && chown -R node:node /app/data /app/logs /home/node
+
 USER node
+ENV HOME=/home/node
 EXPOSE 8300
-# busybox wget(alpine 내장)으로 헬스 엔드포인트 확인.
-# `localhost`가 아니라 `127.0.0.1`을 쓴다 — busybox wget은 /etc/hosts의 ::1을 먼저 시도하는데
-# 서버는 0.0.0.0(IPv4)에만 바인딩하므로 localhost로는 Connection refused가 난다.
+
+# bookworm does not have busybox wget by default – use curl or install wget
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:8300/health || exit 1
+  CMD curl -fsS http://127.0.0.1:8300/health || exit 1
+
 CMD ["npx", "tsx", "packages/server/src/index.ts"]
 
 # ── 대시보드 빌드 ───────────────────────────────────────
