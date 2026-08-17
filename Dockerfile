@@ -12,7 +12,7 @@
 #    호스트 dev 실행과 동일하게 tsx 런타임으로 구동한다. shared만 tsc 빌드.
 
 # ── 공통 베이스: 의존성 + 소스 ──────────────────────────
-FROM node:22-alpine AS base
+FROM node:22-bookworm AS base
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
@@ -32,6 +32,11 @@ RUN npm run build --workspace=packages/shared
 # ── 서버 (기본 타겟) ────────────────────────────────────
 FROM base AS server
 COPY packages/server packages/server
+
+RUN curl -fsSL https://x.ai/cli/install.sh | bash \
+ && ln -sf /root/.grok/bin/grok /usr/local/bin/grok \
+ && chmod +x /usr/local/bin/grok
+
 # 비root 실행: node 이미지의 내장 node 사용자(uid 1000)로 권한 강등.
 # SQLite/로그 기록 경로(data, logs)만 소유권 부여 (node_modules는 read-only 사용).
 RUN mkdir -p /app/data /app/logs && chown -R node:node /app/data /app/logs
