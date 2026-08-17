@@ -38,14 +38,18 @@ FROM base AS server
 COPY packages/server packages/server
 
 RUN curl -fsSL https://x.ai/cli/install.sh | bash \
- && ln -sf /root/.grok/bin/grok /usr/local/bin/grok \
- && chmod +x /usr/local/bin/grok
+ && GROK_BIN="$(find /root -type f -name 'grok' 2>/dev/null | head -1)" \
+ && test -n "$GROK_BIN" \
+ && cp "$GROK_BIN" /usr/local/bin/grok \
+ && chmod 755 /usr/local/bin/grok \
+ && /usr/local/bin/grok --version
 
 RUN mkdir -p /app/data /app/logs /home/node/.grok \
  && chown -R node:node /app/data /app/logs /home/node
 
 USER node
 ENV HOME=/home/node
+ENV PATH="/usr/local/bin:${PATH}"
 EXPOSE 8300
 
 # bookworm does not have busybox wget by default – use curl or install wget
