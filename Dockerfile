@@ -40,15 +40,14 @@ COPY packages/server packages/server
 # Install Grok CLI and place a real executable on PATH for user `node`
 RUN set -eux; \
     curl -fsSL https://x.ai/cli/install.sh | bash; \
-    # Prefer the known location; -L follows the symlink to the real binary
-    if [ -e /root/.grok/bin/grok ]; then \
-      cp -L /root/.grok/bin/grok /usr/local/bin/grok; \
-    else \
-      GROK_BIN="$(find /root/.grok -name 'grok' \( -type f -o -type l \) 2>/dev/null | head -1)"; \
-      test -n "$GROK_BIN"; \
-      cp -L "$GROK_BIN" /usr/local/bin/grok; \
-    fi; \
+    # Installer may have already symlinked into /usr/local/bin → remove those
+    rm -f /usr/local/bin/grok /usr/local/bin/agent; \
+    # Copy the real binary (follow symlink under /root/.grok)
+    cp -L /root/.grok/bin/grok /usr/local/bin/grok; \
+    cp -L /root/.grok/bin/agent /usr/local/bin/agent || true; \
     chmod 755 /usr/local/bin/grok; \
+    # Optional: drop root-only tree so we don't rely on it at runtime
+    # rm -rf /root/.grok; \
     /usr/local/bin/grok --version
 
 RUN mkdir -p /app/data /app/logs /home/node/.grok \
