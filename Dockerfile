@@ -37,12 +37,19 @@ RUN npm run build --workspace=packages/shared
 FROM base AS server
 COPY packages/server packages/server
 
-RUN curl -fsSL https://x.ai/cli/install.sh | bash \
- && GROK_BIN="$(find /root -type f -name 'grok' 2>/dev/null | head -1)" \
- && test -n "$GROK_BIN" \
- && cp "$GROK_BIN" /usr/local/bin/grok \
- && chmod 755 /usr/local/bin/grok \
- && /usr/local/bin/grok --version
+# Install Grok CLI and place a real executable on PATH for user `node`
+RUN set -eux; \
+    curl -fsSL https://x.ai/cli/install.sh | bash; \
+    # Prefer the known location; -L follows the symlink to the real binary
+    if [ -e /root/.grok/bin/grok ]; then \
+      cp -L /root/.grok/bin/grok /usr/local/bin/grok; \
+    else \
+      GROK_BIN="$(find /root/.grok -name 'grok' \( -type f -o -type l \) 2>/dev/null | head -1)"; \
+      test -n "$GROK_BIN"; \
+      cp -L "$GROK_BIN" /usr/local/bin/grok; \
+    fi; \
+    chmod 755 /usr/local/bin/grok; \
+    /usr/local/bin/grok --version
 
 RUN mkdir -p /app/data /app/logs /home/node/.grok \
  && chown -R node:node /app/data /app/logs /home/node
